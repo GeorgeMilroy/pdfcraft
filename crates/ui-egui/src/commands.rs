@@ -119,6 +119,10 @@ impl PdfCraftApp {
         if !self.profile.allows_command(spec) {
             return false;
         }
+        // A brand without community links has no Discord, web page or GitHub to open.
+        if !crate::brand::current().community_links && pdfcraft_engine::links::for_command(spec.id).is_some() {
+            return false;
+        }
         if !self.command_enabled(spec) {
             let why = match spec.needs {
                 commands::Needs::Undo => tl!("Nothing to undo").to_string(),
