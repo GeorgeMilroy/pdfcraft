@@ -56,6 +56,9 @@ pub fn show(app: &mut PdfCraftApp, ctx: &egui::Context) {
         if !app.profile.allows_command(spec) {
             continue;
         }
+        if !crate::brand::current().community_links && pdfcraft_engine::links::for_command(spec.id).is_some() {
+            continue;
+        }
         let label = pdfcraft_engine::commands::current_label(spec, &app.session, active);
         let translated = crate::i18n::command_label(&label);
         if let Some(s) = score(&translated, &q).or_else(|| score(&label, &q)).or_else(|| score(spec.id, &q).map(|s| s + 50)) {
