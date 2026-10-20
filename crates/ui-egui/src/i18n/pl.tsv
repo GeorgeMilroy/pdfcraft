@@ -2346,6 +2346,7 @@ animation effects	Off	Wyłączone
 	Opening the browser's print dialog…	Otwieranie okna drukowania przeglądarki…
 	Couldn't print from the browser ({e}); downloaded {name} to print instead	Nie można drukować z przeglądarki ({e}); zamiast tego pobrano plik {name} do wydruku
 	Tools panel side	Strona panelu narzędzi
+	Tools	Narzędzia
 	Add comment	Dodaj komentarz
 	Change tag properties	Zmień właściwości znacznika
 # Accessibility structure tags.
