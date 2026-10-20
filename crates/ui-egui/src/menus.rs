@@ -280,6 +280,7 @@ impl PdfCraftApp {
         let list = |ids: &[&'static str], used: &mut Vec<&'static str>| -> Vec<Node> {
             ids.iter()
                 .filter(|&&id| community || pdfcraft_engine::links::for_command(id).is_none())
+                .filter(|&&id| self.profile.allows_id(id))
                 .map(|&id| {
                     if id == SEP {
                         return Node::Separator;

@@ -83,7 +83,8 @@ impl PdfCraftApp {
         if self.combine_showing() && matches!(spec.needs, commands::Needs::Undo | commands::Needs::Redo) {
             return self.combine_can_undo(spec.needs == commands::Needs::Undo);
         }
-        commands::is_enabled(spec, &self.session, self.active_ids().map(|(_, id)| id))
+        self.profile.allows_command(spec)
+            && commands::is_enabled(spec, &self.session, self.active_ids().map(|(_, id)| id))
             && (spec.id != "edit.copy"
                 || self
                     .active
@@ -152,6 +153,9 @@ impl PdfCraftApp {
 
     fn execute_unguarded(&mut self, id: &str) -> bool {
         let Some(spec) = commands::command(id) else { return false };
+        if !self.profile.allows_command(spec) {
+            return false;
+        }
         if !self.command_enabled(spec) {
             let why = self.disabled_reason(spec);
             self.notify(why);
