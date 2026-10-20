@@ -9,6 +9,13 @@ rust-version = "1.95"
 [lints]
 workspace = true
 
+[features]
+default = ["artcraft-marks"]
+# The ArtCraft wordmark and mark (docs/brand/, Storyteller's trademarks) as the default brand's
+# images. A white-label build that sets its own `brand::Brand` turns this off so the marks are
+# not compiled in at all.
+artcraft-marks = []
+
 [dependencies]
 craft-ui = { workspace = true }
 # The menus: native on macOS, an egui bar elsewhere, from one definition (menus.rs).
