@@ -42,6 +42,10 @@ impl PdfCraftApp {
     /// Apply an edit to the active document. Returns `true` on success; failures are shown.
     pub fn apply_edit(&mut self, edit: Edit) -> bool {
         let Some((i, id)) = self.active_ids() else { return false };
+        if !self.profile.allows_edit(&edit) {
+            self.notify(tl!("Not allowed"));
+            return false;
+        }
         let label = edit.label();
         let (form_before, page_count_before, had_xfa) = if let Some(d) = self.session.get(id) {
             (Some(std::sync::Arc::clone(&d.form)), d.info.pages.len(), d.xfa.is_some())
@@ -229,6 +233,9 @@ impl PdfCraftApp {
 
     fn history_step(&mut self, undo: bool) {
         let Some((i, id)) = self.active_ids() else { return };
+        if self.profile.read_only {
+            return;
+        }
         let result = if undo { self.session.undo(id) } else { self.session.redo(id) };
         match result {
             Ok(label) => {
@@ -626,6 +633,9 @@ impl PdfCraftApp {
     /// [`Self::save_view`], then `after` once the document is written: now, or on a later frame
     /// when the user had to choose where. `after` never runs when the save fails or is cancelled.
     pub(crate) fn save_then(&mut self, index: usize, target: SaveTarget, after: impl FnOnce(&mut Self) + Send + 'static) -> bool {
+        if !self.profile.allows_save() {
+            return false;
+        }
         // What's typed in a field is part of what's saved (#166).
         if let Some(id) = self.views.get(index).map(|v| v.id)
             && !self.commit_typing_in(id)
