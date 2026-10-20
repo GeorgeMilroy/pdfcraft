@@ -529,6 +529,7 @@ pub(crate) fn page_area(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
 fn main_pane(app: &mut PdfCraftApp, main: Option<usize>, ui: &mut egui::Ui) {
     match main {
         None if app.combine_showing() => crate::combine_ui::page(app, ui),
+        None if app.profile.hides(crate::profile::parts::HOME) => {}
         None => crate::home::show(app, ui),
         Some(index) => match crate::compare_ui::side_by_side(app, index) {
             Some((old, new)) => crate::compare_ui::compare_area(app, old, new, ui),

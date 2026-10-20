@@ -172,6 +172,10 @@ impl PdfCraftApp {
         let Some((i, id)) = self.active_ids() else { return false };
         // Taken whatever happens to this edit, so it never carries over to another.
         let across_pages = std::mem::take(&mut self.views[i].marks_across_pages).filter(|_| annotated_pages(&edit).is_some());
+        if !self.profile.allows_edit(&edit) {
+            self.notify(tl!("Not allowed"));
+            return false;
+        }
         let label = edit.label();
         let target_arrange_image = match &edit {
             Edit::EditPageImage { page, index, change: pdfcraft_engine::ImageEdit::Arrange(_) } => {
@@ -400,6 +404,9 @@ impl PdfCraftApp {
 
     fn history_step(&mut self, undo: bool) {
         let Some((i, id)) = self.active_ids() else { return };
+        if self.profile.read_only {
+            return;
+        }
         if !self.close_text_editors(i, id) {
             return;
         }

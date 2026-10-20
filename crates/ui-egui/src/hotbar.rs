@@ -191,7 +191,7 @@ fn matches_search(spec: &pdfcraft_engine::commands::CommandSpec, query: &str) ->
 /// Render the configured custom tool shortcut buttons and their removal context menus.
 fn tool_buttons(ui: &mut egui::Ui, app: &PdfCraftApp, tools: &[String], cell: f32, run: &mut Option<&'static str>, remove: &mut Option<usize>) {
     for (index, id) in tools.iter().enumerate() {
-        let Some(spec) = command(id) else { continue };
+        let Some(spec) = command(id).filter(|spec| app.profile.allows_command(spec)) else { continue };
         let active = crate::comments::CommentTool::from_command(id).is_some_and(|tool| app.quick_tool == crate::QuickTool::Comment(tool));
         let button = ui.add_enabled_ui(app.command_enabled(spec), |ui| icons::button(ui, spec.icon, cell, active, tl!(spec.label))).inner;
         if button.clicked() {
@@ -223,7 +223,12 @@ fn core_tool_buttons(ui: &mut egui::Ui, app: &mut PdfCraftApp, cell: f32, popup_
     // Comment ▸, Highlight ▸, Draw ▸ (Acrobat's comment toolbar groups). Clicking a
     // group selects its last-used tool; clicking it again opens the flyout.
     for g in 0..comments::GROUPS.len() {
-        let current = app.comment_prefs.group_tool[g];
+        // A group shows its last-used tool, or the first one the profile allows.
+        let mut current = app.comment_prefs.group_tool[g];
+        if !app.profile.allows_id(current.command()) {
+            let Some(first) = comments::GROUPS[g].iter().find(|t| app.profile.allows_id(t.command())) else { continue };
+            current = *first;
+        }
         let active = matches!(app.quick_tool, QuickTool::Comment(t) if t.group() == g);
         let resp = icons::button(ui, current.icon(), cell, active, tl!(current.label()));
         if comments::GROUPS[g].len() == 1 {
@@ -242,6 +247,9 @@ fn core_tool_buttons(ui: &mut egui::Ui, app: &mut PdfCraftApp, cell: f32, popup_
         }
         egui::Popup::menu(&resp).open_memory(open.then_some(egui::SetOpenCommand::Toggle)).align(popup_align).gap(6.0).show(|ui| {
             for tool in comments::GROUPS[g] {
+                if !app.profile.allows_id(tool.command()) {
+                    continue;
+                }
                 let on = app.quick_tool == QuickTool::Comment(*tool);
                 let (row, click) = ui.allocate_exact_size(vec2(180.0, 28.0), Sense::click());
                 let press = theme::Press::track(ui, &click);
@@ -288,6 +296,10 @@ fn core_tool_buttons(ui: &mut egui::Ui, app: &mut PdfCraftApp, cell: f32, popup_
         _ => None,
     };
     let shown = current_fill.unwrap_or(app.fill_tool);
+    // Fill & Sign ▸ unless the profile hides it.
+    if !app.profile.allows_id(shown.command()) {
+        return;
+    }
     let tip = match shown {
         crate::fill_sign::FillTool::Signature | crate::fill_sign::FillTool::Initials if current_fill.is_none() => {
             let initials = shown == crate::fill_sign::FillTool::Initials;
@@ -310,7 +322,7 @@ fn core_tool_buttons(ui: &mut egui::Ui, app: &mut PdfCraftApp, cell: f32, popup_
     let open = (resp.clicked() && current_fill.is_some()) || resp.secondary_clicked();
     egui::Popup::menu(&resp).open_memory(open.then_some(egui::SetOpenCommand::Toggle)).align(popup_align).gap(6.0).show(|ui| {
         for tool in crate::fill_sign::FILL_TOOLS {
-            if matches!(tool, crate::fill_sign::FillTool::Signature | crate::fill_sign::FillTool::Initials) {
+            if matches!(tool, crate::fill_sign::FillTool::Signature | crate::fill_sign::FillTool::Initials) || !app.profile.allows_id(tool.command()) {
                 continue;
             }
             let on = current_fill == Some(tool);
@@ -913,7 +925,7 @@ pub(crate) fn show(app: &mut PdfCraftApp, area: Rect, page_left: Option<f32>, ui
             egui::ScrollArea::vertical().max_height(max_list_height).auto_shrink([false, false]).show(ui, |ui| {
                 ui.spacing_mut().item_spacing.y = 5.0;
                 for spec in COMMANDS {
-                    if !matches_search(spec, &bar.search) {
+                    if !matches_search(spec, &bar.search) || !app.profile.allows_command(spec) {
                         continue;
                     }
                     let mut selected = bar.tools.iter().any(|id| id == spec.id);

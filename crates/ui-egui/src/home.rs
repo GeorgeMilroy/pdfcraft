@@ -128,7 +128,7 @@ pub fn show(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
                             if app.is_tool_pinned(id) {
                                 continue;
                             }
-                            let Some(g) = catalog::group(id) else { continue };
+                            let Some(g) = catalog::group(id).filter(|g| !app.profile.hides_group(g.id)) else { continue };
                             tool_card(app, ui, &t, g, false);
                         }
                         let (rect, resp) = ui.allocate_exact_size(vec2(170.0, 104.0), Sense::click());
@@ -170,7 +170,7 @@ pub fn show(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
                 ui.horizontal_wrapped(|ui| {
                     ui.spacing_mut().item_spacing = vec2(14.0, 14.0);
                     for id in &pinned {
-                        let Some(g) = catalog::group(id) else { continue };
+                        let Some(g) = catalog::group(id).filter(|g| !app.profile.hides_group(g.id)) else { continue };
                         if let Some(to_unpin) = tool_card(app, ui, &t, g, true) {
                             unpin_tool = Some(to_unpin);
                         }
