@@ -42,13 +42,24 @@ pub fn button(ui: &mut egui::Ui, name: &str, box_size: f32, selected: bool, tool
 /// [`button`] whose tooltip says more than its accessible name (`label`). It shows that one
 /// tooltip, so callers add no `on_hover_text` of their own (#6548: two tooltips stacked).
 pub fn labeled_button(ui: &mut egui::Ui, name: &str, box_size: f32, selected: bool, label: &str, tooltip: &str) -> Response {
+    let glyph = Tokens::get(ui.ctx()).icon;
+    glyph_button(ui, name, box_size, selected, label, tooltip, glyph)
+}
+
+/// [`button`] with the glyph in `glyph` (a tool group's hue) instead of the icon colour.
+pub fn tinted_button(ui: &mut egui::Ui, name: &str, box_size: f32, selected: bool, tooltip: &str, glyph: Color32) -> Response {
+    glyph_button(ui, name, box_size, selected, tooltip, tooltip, glyph)
+}
+
+/// [`labeled_button`] with the glyph in `glyph`.
+fn glyph_button(ui: &mut egui::Ui, name: &str, box_size: f32, selected: bool, label: &str, tooltip: &str, glyph: Color32) -> Response {
     let t = Tokens::get(ui.ctx());
     // The shared button paints no fill of its own: the eased press wash below replaces it.
     let clear = |icon| ButtonVisuals { fill: Color32::TRANSPARENT, stroke: Stroke::NONE, icon };
     let style = IconButtonStyle {
-        normal: clear(t.icon),
-        hovered: clear(t.icon),
-        pressed: Some(clear(t.icon)),
+        normal: clear(glyph),
+        hovered: clear(glyph),
+        pressed: Some(clear(glyph)),
         selected: clear(t.accent_text),
         corner_radius: t.radius.into(),
         focus_stroke: Stroke::new(1.0, t.accent),
