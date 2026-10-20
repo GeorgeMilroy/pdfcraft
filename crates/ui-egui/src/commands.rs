@@ -84,7 +84,8 @@ impl PdfCraftApp {
         if self.combine_showing() && matches!(spec.needs, commands::Needs::Undo | commands::Needs::Redo) {
             return self.combine_can_undo(spec.needs == commands::Needs::Undo);
         }
-        commands::is_enabled(spec, &self.session, self.active_ids().map(|(_, id)| id))
+        self.profile.allows_command(spec)
+            && commands::is_enabled(spec, &self.session, self.active_ids().map(|(_, id)| id))
             && (spec.id != "edit.copy"
                 || self
                     .active
@@ -115,6 +116,9 @@ impl PdfCraftApp {
 
     fn execute_unguarded(&mut self, id: &str) -> bool {
         let Some(spec) = commands::command(id) else { return false };
+        if !self.profile.allows_command(spec) {
+            return false;
+        }
         if !self.command_enabled(spec) {
             let why = match spec.needs {
                 commands::Needs::Undo => tl!("Nothing to undo").to_string(),
@@ -791,6 +795,9 @@ fn tab_after(current: Option<usize>, count: usize, forward: bool) -> Option<usiz
 pub(crate) fn registry_menu(app: &mut PdfCraftApp, ui: &mut egui::Ui, menu: &str) {
     for spec in commands::menu(menu) {
         if !crate::brand::current().community_links && pdfcraft_engine::links::for_command(spec.id).is_some() {
+            continue;
+        }
+        if !app.profile.allows_command(spec) {
             continue;
         }
         let label = commands::current_label(spec, &app.session, app.active_ids().map(|(_, id)| id));

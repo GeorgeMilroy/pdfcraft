@@ -87,6 +87,7 @@ pub mod bulk_fields;
 mod dialogs;
 mod edit_text_ui;
 pub mod field_table_ui;
+pub mod profile;
 pub use edit_text_ui::CropMode;
 mod editing;
 #[cfg(not(target_arch = "wasm32"))]
@@ -783,6 +784,8 @@ pub struct PdfCraftApp {
     pub host_save: Option<HostSaveFn>,
     /// Reports unsaved work to the embedding page (web, see [`HostDirtyFn`]).
     pub host_dirty: Option<HostDirtyFn>,
+    /// What an embedding host lets the interface do (view only, comments only, hidden commands).
+    pub profile: profile::UiProfile,
     /// A pending "save changes?" question (closing a dirty tab or quitting).
     pub close_request: Option<CloseRequest>,
     /// The button of the "save changes?" question the keyboard has chosen; Save when it opens.
@@ -1181,6 +1184,7 @@ impl PdfCraftApp {
             os_events: None,
             host_save: None,
             host_dirty: None,
+            profile: profile::UiProfile::default(),
             close_request: None,
             save_prompt_button: Default::default(),
             save_prompt_seen: false,
@@ -2478,6 +2482,9 @@ impl PdfCraftApp {
     /// Enter a tool from the catalogue, Home, palette or control channel. Organize is a
     /// workspace, so opening its panel also opens the page grid (without toggling it off).
     pub(crate) fn select_tool(&mut self, id: &'static str) {
+        if self.profile.hides_group(id) {
+            return;
+        }
         // The tool's panel shows, not the expanded All tools view over it.
         self.all_tools_full = false;
         self.left = LeftPanel::Tool(id);
@@ -3489,6 +3496,18 @@ impl eframe::App for PdfCraftApp {
         // Notices raised outside `ui` (opened files, OS events, the control channel) translate too.
         let lang = i18n::Lang::from_pref(&self.language);
         i18n::set_current(lang);
+        if self.profile.read_only {
+            // View only: the Read workspace, and no tool that changes the document.
+            if self.mode != Mode::Read {
+                self.switch_mode(Mode::Read, false);
+            }
+            if !matches!(
+                self.quick_tool,
+                QuickTool::Select | QuickTool::Hand | QuickTool::MarqueeZoom | QuickTool::Snapshot | QuickTool::ColumnSelect
+            ) {
+                self.quick_tool = QuickTool::Select;
+            }
+        }
         #[cfg(not(target_arch = "wasm32"))]
         {
             if let Some(worker) = &self.open_worker {
@@ -3536,6 +3555,9 @@ impl eframe::App for PdfCraftApp {
         #[cfg(not(target_arch = "wasm32"))]
         let dropped = self.drop_on_grid(dropped, ctx);
         for f in dropped {
+            if self.profile.hides("file.open") {
+                continue;
+            }
             // Files dropped on the Combine files tab join its list instead of opening.
             if self.combine_showing() {
                 self.drop_into_combine(f, ctx);
@@ -3698,7 +3720,9 @@ impl eframe::App for PdfCraftApp {
         if self.draws_window_frame() {
             window_controls::resize_edges(&ctx);
         }
-        chrome::tab_strip(self, ui);
+        if !self.profile.hides(profile::parts::TABS) {
+            chrome::tab_strip(self, ui);
+        }
         chrome::mode_bar(self, ui);
         if self.active.is_some() {
             chrome::right_rail(self, ui);
@@ -3723,6 +3747,7 @@ impl eframe::App for PdfCraftApp {
             if self.mode == Mode::Read {
                 match self.active {
                     None if self.combine_showing() => combine_ui::page(self, ui),
+                    None if self.profile.hides(profile::parts::HOME) => {}
                     None => home::show(self, ui),
                     Some(index) => match compare_ui::side_by_side(self, index) {
                         Some((old, new)) => compare_ui::compare_area(self, old, new, ui),
