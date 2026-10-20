@@ -63,20 +63,13 @@ pub struct Brand {
 
 impl Default for Brand {
     fn default() -> Self {
+        let (logo_light, logo_dark, mark) = default_marks();
         Self {
             app_name: DEFAULT_APP_NAME.to_owned(),
             version: None,
-            logo_light: Some(BrandImage::new_static(
-                "bytes://artcraft-logo.svg",
-                include_bytes!("../../../docs/brand/artcraft-logo.svg"),
-                "ArtCraft",
-            )),
-            logo_dark: Some(BrandImage::new_static(
-                "bytes://artcraft-logo-white.svg",
-                include_bytes!("../../../docs/brand/artcraft-logo-white.svg"),
-                "ArtCraft",
-            )),
-            mark: Some(BrandImage::new_static("bytes://artcraft-mark.svg", include_bytes!("../../../docs/brand/artcraft-mark.svg"), "ArtCraft")),
+            logo_light,
+            logo_dark,
+            mark,
             accent: None,
             about_text: None,
             about_url: None,
@@ -84,6 +77,22 @@ impl Default for Brand {
             storage_key: "pdfcraft".to_owned(),
         }
     }
+}
+
+/// The ArtCraft wordmark (light, dark) and mark, when the `artcraft-marks` feature is on.
+#[cfg(feature = "artcraft-marks")]
+fn default_marks() -> (Option<BrandImage>, Option<BrandImage>, Option<BrandImage>) {
+    (
+        Some(BrandImage::new_static("bytes://artcraft-logo.svg", include_bytes!("../../../docs/brand/artcraft-logo.svg"), "ArtCraft")),
+        Some(BrandImage::new_static("bytes://artcraft-logo-white.svg", include_bytes!("../../../docs/brand/artcraft-logo-white.svg"), "ArtCraft")),
+        Some(BrandImage::new_static("bytes://artcraft-mark.svg", include_bytes!("../../../docs/brand/artcraft-mark.svg"), "ArtCraft")),
+    )
+}
+
+/// Without the `artcraft-marks` feature the default brand has no images.
+#[cfg(not(feature = "artcraft-marks"))]
+fn default_marks() -> (Option<BrandImage>, Option<BrandImage>, Option<BrandImage>) {
+    (None, None, None)
 }
 
 impl Brand {
@@ -164,7 +173,7 @@ mod tests {
         assert_eq!(b.app_name, "PdfCraft");
         assert_eq!(b.storage_key, "pdfcraft");
         assert!(b.community_links);
-        assert!(b.logo_light.is_some() && b.logo_dark.is_some() && b.mark.is_some());
+        assert_eq!(b.logo_light.is_some() && b.logo_dark.is_some() && b.mark.is_some(), cfg!(feature = "artcraft-marks"));
         assert_eq!(b.renamed("Welcome to PdfCraft"), None);
         assert_eq!(b.window_title(Some("a.pdf")), "a.pdf — PdfCraft");
         assert_eq!(b.window_title(None), "PdfCraft");
