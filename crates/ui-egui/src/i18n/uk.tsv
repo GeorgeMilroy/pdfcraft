@@ -2325,6 +2325,7 @@ key	Space	Пробіл
 	Panels	Панелі
 	Resize panels	Змінити розмір панелей
 	Resize panel window	Змінити розмір вікна панелі
+	Tools	Інструменти
 
 # Architectural print controls (follow-up to #599).
 	PDF page: {size}	Сторінка PDF: {size}
