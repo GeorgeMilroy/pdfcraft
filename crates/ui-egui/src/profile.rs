@@ -36,6 +36,10 @@ pub struct UiProfile {
     /// Hidden command ids (`file.save`), tool groups (`group:export`) and interface parts
     /// ([`parts`]). A hidden command does not run.
     pub hidden: BTreeSet<String>,
+    /// While the Tools panel is closed, or hidden by Read mode, a rail on its side brings it
+    /// back: one button reopens it as it was, then one per tool group shown opens that group.
+    /// For hosts that hide the mode tabs, which otherwise bring it back. Not with `read_only`.
+    pub tools_rail: bool,
 }
 
 impl UiProfile {
