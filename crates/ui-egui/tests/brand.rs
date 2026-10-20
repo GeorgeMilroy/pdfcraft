@@ -42,6 +42,11 @@ fn a_custom_brand_names_the_app_everywhere_and_drops_the_marks() {
     assert!(h.query_by_label_contains("Welcome to PdfCraft").is_none());
     no_trademarks(&h, "home");
     assert_eq!(h.state().window_title, "Acme PDF");
+    // The community links don't run either (palette, shortcuts, set_option).
+    for l in pdfcraft_engine::links::LINKS {
+        assert!(!h.state_mut().execute(l.command), "{} ran", l.command);
+    }
+    assert_eq!(h.state().last_opened_url, None);
 
     // About: name, version and text from the brand; no "Part of ArtCraft".
     h.state_mut().set_option("dialog", "about").unwrap();
