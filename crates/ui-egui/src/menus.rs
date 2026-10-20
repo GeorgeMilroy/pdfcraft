@@ -265,7 +265,8 @@ fn translate(english: &'static str) -> String {
 
 /// The layouts' own labels (About, Quit, Window…) through the app's translations.
 pub(crate) fn layout_options() -> LayoutOptions<'static> {
-    LayoutOptions { label: &translate, ..LayoutOptions::new(APP_NAME) }
+    // A white-label brand names the app menu and its About, Hide and Quit (crate::brand).
+    LayoutOptions { label: &translate, ..LayoutOptions::new(crate::brand::rebrand(APP_NAME)) }
 }
 
 impl PdfCraftApp {
@@ -274,8 +275,11 @@ impl PdfCraftApp {
     /// that is the [`Gate`]'s job ([`PdfCraftApp::menu_gate`]).
     pub fn menu_bar(&self, ctx: &egui::Context) -> MenuBar {
         let mut used: Vec<&str> = Vec::new();
+        // A white-label brand may leave the community links out of Help (crate::brand).
+        let community = crate::brand::current().community_links;
         let list = |ids: &[&'static str], used: &mut Vec<&'static str>| -> Vec<Node> {
             ids.iter()
+                .filter(|&&id| community || pdfcraft_engine::links::for_command(id).is_none())
                 .map(|&id| {
                     if id == SEP {
                         return Node::Separator;

@@ -41,6 +41,7 @@ pub use link_ui::LinkDraft;
 pub use optimize_ui::{OptimizeDraft, OptimizeTab};
 pub use sign_ui::{DigitalIdEntry, SignDraft, SignGraphic, SignStep};
 mod bidi;
+pub mod brand;
 mod dialogs;
 pub use edit_text_ui::CropMode;
 mod editing;
