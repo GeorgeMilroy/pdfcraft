@@ -71,25 +71,26 @@ fn all_tools(app: &mut PdfCraftApp, ui: &mut egui::Ui, t: &Tokens) {
     }
     egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
         ui.add_space(2.0);
-        let shown = if app.all_tools_expanded { TOOL_GROUPS.len() } else { COLLAPSED_TOOLS.min(TOOL_GROUPS.len()) };
-        for g in &TOOL_GROUPS[..shown] {
-            if app.profile.hides_group(g.id) {
-                continue;
-            }
+        // The collapsed list counts the groups the profile shows, so hiding some never pushes the
+        // rest behind View more.
+        let visible: Vec<&'static ToolGroup> = TOOL_GROUPS.iter().filter(|g| !app.profile.hides_group(g.id)).collect();
+        let shown = if app.all_tools_expanded { visible.len() } else { COLLAPSED_TOOLS.min(visible.len()) };
+        for g in visible.iter().take(shown) {
             if tool_row(ui, t, g).clicked() {
                 app.select_tool(g.id);
             }
         }
         ui.add_space(4.0);
         let more = if app.all_tools_expanded { "View less" } else { "View more" };
-        if ui
-            .add(
-                egui::Label::new(egui::RichText::new(tl!(more)).color(t.accent_text).font(theme::medium(13.0)))
-                    .selectable(false)
-                    .sense(Sense::click()),
-            )
-            .on_hover_cursor(egui::CursorIcon::PointingHand)
-            .clicked()
+        if visible.len() > COLLAPSED_TOOLS
+            && ui
+                .add(
+                    egui::Label::new(egui::RichText::new(tl!(more)).color(t.accent_text).font(theme::medium(13.0)))
+                        .selectable(false)
+                        .sense(Sense::click()),
+                )
+                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                .clicked()
         {
             app.all_tools_expanded = !app.all_tools_expanded;
         }
