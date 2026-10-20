@@ -140,3 +140,22 @@ fn hidden_commands_and_groups_do_not_show_or_run() {
     assert!(h.query_by_label("Convert").is_none(), "mode tabs hidden");
     assert!(h.query_by_label("Open").is_none(), "tab strip hidden");
 }
+
+#[test]
+fn all_tools_lists_every_group_the_profile_keeps_without_view_more() {
+    // Keep four groups, one of them past the first 14 of the catalogue (Measure objects).
+    let keep = ["fill_sign", "comment", "stamp", "measure"];
+    let mut profile = UiProfile::default();
+    for g in pdfcraft_engine::catalog::TOOL_GROUPS {
+        if !keep.contains(&g.id) {
+            profile.hidden.insert(format!("group:{}", g.id));
+        }
+    }
+    let mut h = harness(profile);
+    h.state_mut().set_option("mode", "all").unwrap();
+    h.run_steps(4);
+    for label in ["Fill & Sign", "Add comments", "Add a stamp", "Measure objects"] {
+        assert!(h.query_all_by_label(label).count() >= 1, "{label} missing from All tools");
+    }
+    assert!(h.query_by_label("View more").is_none(), "nothing left to show");
+}
