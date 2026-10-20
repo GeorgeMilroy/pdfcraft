@@ -638,6 +638,50 @@ fn main_menu(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
     });
 }
 
+/// The rail that brings back a closed Tools panel, or one Read mode hides, when the profile asks
+/// for it ([`crate::profile::UiProfile::tools_rail`]). It sits on the Tools panel side.
+pub fn tools_rail(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
+    let read = app.mode == Mode::Read;
+    // A read-only profile keeps the app in Read mode, without tools to bring back.
+    if !app.profile.tools_rail || app.profile.read_only || (app.left_open && !read) {
+        return;
+    }
+    let t = Tokens::get(ui.ctx());
+    let right = app.docking.tools_on_right();
+    let panel = if right { egui::Panel::right("tools_rail") } else { egui::Panel::left("tools_rail") };
+    panel
+        .resizable(false)
+        .exact_size(48.0)
+        .frame(egui::Frame::NONE.fill(t.chrome).inner_margin(egui::Margin::symmetric(6, 8)).stroke(Stroke::new(1.0, t.divider)))
+        .show(ui, |ui| {
+            ui.spacing_mut().item_spacing.y = 4.0;
+            let reopen = icons::button(ui, if right { "chevrons-left" } else { "chevrons-right" }, 34.0, false, tl!("Tools")).clicked();
+            ui.separator();
+            let mut group = None;
+            egui::ScrollArea::vertical().auto_shrink([true, false]).show(ui, |ui| {
+                for g in pdfcraft_engine::catalog::TOOL_GROUPS {
+                    // In the group's hue, as in All tools, so they read as the panel's groups.
+                    let hue = Color32::from_rgb(g.hue[0], g.hue[1], g.hue[2]);
+                    if !app.profile.hides_group(g.id) && icons::tinted_button(ui, g.icon, 34.0, false, tl!(g.label), hue).clicked() {
+                        group = Some(g.id);
+                    }
+                }
+            });
+            if reopen || group.is_some() {
+                // Leave Read mode the way its own toggle does.
+                if read {
+                    app.switch_mode(Mode::AllTools, false);
+                }
+                match group {
+                    Some(id) => app.select_tool(id),
+                    None => app.reveal_tools(),
+                }
+                // The panel takes the rail's place on the next frame.
+                ui.ctx().request_repaint();
+            }
+        });
+}
+
 pub fn right_rail(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
     let t = Tokens::get(ui.ctx());
     let Some((index, id)) = app.active_ids() else { return };
