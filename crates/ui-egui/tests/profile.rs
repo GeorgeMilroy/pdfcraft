@@ -142,6 +142,59 @@ fn hidden_commands_and_groups_do_not_show_or_run() {
 }
 
 #[test]
+fn a_closed_tools_panel_comes_back_from_the_tools_rail() {
+    let mut profile = UiProfile { tools_rail: true, ..UiProfile::default() };
+    for g in pdfcraft_engine::catalog::TOOL_GROUPS {
+        if !["comment", "measure"].contains(&g.id) {
+            profile.hidden.insert(format!("group:{}", g.id));
+        }
+    }
+    let mut h = harness(profile);
+    h.state_mut().set_option("mode", "all").unwrap();
+    h.state_mut().set_option("left", "closed").unwrap();
+    h.run_steps(4);
+    assert!(!h.state().left_open);
+    // The rail's first button brings the panel back as it was (All tools).
+    h.get_by_label("Tools").click();
+    h.run_steps(4);
+    assert!(h.state().left_open, "Tools reopens the panel");
+    assert_eq!(h.state().left, pdfcraft_ui_egui::LeftPanel::AllTools, "the panel shows All tools again");
+    // A tool group's button opens the panel on that group; hidden groups have none.
+    h.state_mut().set_option("left", "closed").unwrap();
+    h.run_steps(4);
+    assert!(h.query_by_label("Add a stamp").is_none(), "hidden group on the rail");
+    h.get_by_label("Measure objects").click();
+    h.run_steps(4);
+    assert!(h.state().left_open && h.state().left == pdfcraft_ui_egui::LeftPanel::Tool("measure"));
+}
+
+#[test]
+fn the_tools_rail_brings_the_tools_back_from_read_mode_unless_read_only() {
+    let mut h = harness(UiProfile { tools_rail: true, ..UiProfile::default() });
+    h.state_mut().set_option("mode", "read").unwrap();
+    h.run_steps(4);
+    assert!(h.state().left_open, "Read mode hides an open panel without closing it");
+    h.get_by_label("Tools").click();
+    h.run_steps(4);
+    assert_eq!(h.state().mode, Mode::AllTools, "the rail leaves Read mode as its toggle does");
+    assert!(h.state().left_open);
+    // A read-only profile pins Read mode: no tools, so no rail.
+    let mut h = harness(UiProfile { tools_rail: true, read_only: true, ..UiProfile::default() });
+    h.run_steps(4);
+    assert_eq!(h.state().mode, Mode::Read);
+    assert!(h.query_by_label("Tools").is_none(), "rail drawn for a read-only profile");
+}
+
+#[test]
+fn without_the_tools_rail_a_closed_panel_leaves_nothing_behind() {
+    let mut h = harness(UiProfile::default());
+    h.state_mut().set_option("mode", "all").unwrap();
+    h.state_mut().set_option("left", "closed").unwrap();
+    h.run_steps(4);
+    assert!(h.query_by_label("Tools").is_none(), "the default profile draws no rail");
+}
+
+#[test]
 fn all_tools_lists_every_group_the_profile_keeps_without_view_more() {
     // Keep four groups, one of them past the first 14 of the catalogue (Measure objects).
     let keep = ["fill_sign", "comment", "stamp", "measure"];
