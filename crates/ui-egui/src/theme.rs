@@ -434,7 +434,13 @@ pub fn apply(ctx: &egui::Context, kind: ThemeKind) {
     // NSWindow appearance and prevents winit from delivering ThemeChanged.
     // Our saved choice owns the palette; both egui branches receive it below.
     ctx.set_theme(egui::ThemePreference::System);
-    let t = Tokens::for_kind(kind);
+    let mut t = Tokens::for_kind(kind);
+    if let Some((light, dark)) = crate::brand::current().accent {
+        let accent = if t.dark() { dark } else { light };
+        t.accent = accent;
+        t.accent_text = accent;
+        t.accent_soft = t.card.lerp_to_gamma(accent, 0.18);
+    }
     ctx.data_mut(|d| d.insert_temp(egui::Id::new("pdfcraft-theme"), t));
     let mut v = if t.dark() { Visuals::dark() } else { Visuals::light() };
     v.panel_fill = t.panel;

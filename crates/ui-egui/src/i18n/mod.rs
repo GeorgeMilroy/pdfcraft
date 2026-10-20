@@ -543,7 +543,7 @@ pub fn key_name(s: &str) -> &str {
 
 /// Translate an English UI string; unknown strings come back unchanged.
 pub fn tr(lang: Lang, s: &str) -> &str {
-    lang.catalog().plain(s).unwrap_or(s)
+    crate::brand::rebrand(lang.catalog().plain(s).unwrap_or(s))
 }
 
 /// How the layers below say their own sentences in the current language.
@@ -559,12 +559,12 @@ pub fn words(wording: &str) -> String {
 
 /// Like [`tr`], for an English string that needs a disambiguating `context`.
 pub fn tr_ctx<'a>(lang: Lang, context: &str, s: &'a str) -> &'a str {
-    lang.catalog().contextual(context, s).unwrap_or_else(|| tr(lang, s))
+    lang.catalog().contextual(context, s).map(crate::brand::rebrand).unwrap_or_else(|| tr(lang, s))
 }
 
 /// A string keyed by its command id, falling back to the translation of the English `label`.
 pub fn tr_id<'a>(lang: Lang, id: &str, label: &'a str) -> &'a str {
-    lang.catalog().id(id).unwrap_or_else(|| tr(lang, label))
+    lang.catalog().id(id).map(crate::brand::rebrand).unwrap_or_else(|| tr(lang, label))
 }
 
 /// Fill `{name}` placeholders in one pass. Unknown placeholders are left as written, and inserted
@@ -651,7 +651,7 @@ pub fn command_label(text: &str) -> String {
 /// [`command_label`] of the current English label.
 pub fn menu_label(id: &str, label: &str) -> String {
     match current().catalog().id(id) {
-        Some(translated) => translated.to_owned(),
+        Some(translated) => crate::brand::rebrand(translated).to_owned(),
         None => command_label(label),
     }
 }
@@ -659,7 +659,7 @@ pub fn menu_label(id: &str, label: &str) -> String {
 /// A plural-aware message: `one`/`other` are the English forms (with `{n}` where the count goes).
 pub fn trn(lang: Lang, n: u64, one: &str, other: &str) -> String {
     let idx = (lang.0.plural)(n);
-    let text = lang.catalog().plural(one, other, idx).unwrap_or(if n == 1 { one } else { other });
+    let text = crate::brand::rebrand(lang.catalog().plural(one, other, idx).unwrap_or(if n == 1 { one } else { other }));
     fmt(text, &[("n", &n.to_string())])
 }
 

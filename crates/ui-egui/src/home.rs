@@ -29,7 +29,8 @@ pub fn show(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
                     .font(theme::regular(14.0)),
             );
             ui.add_space(14.0);
-            if !app.community_card_closed {
+            // A white-label brand may leave the community out (crate::brand).
+            if crate::brand::current().community_links && !app.community_card_closed {
                 egui::Frame::NONE
                     .fill(t.card)
                     .stroke(Stroke::new(1.0, t.border))
