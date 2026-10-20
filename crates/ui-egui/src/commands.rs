@@ -89,7 +89,8 @@ impl PdfCraftApp {
         }
         // Undo also takes back typing in a box open on the page, and Redo what Undo took there,
         // with no document step.
-        (commands::is_enabled(spec, &self.session, self.active_ids().map(|(_, id)| id))
+        self.profile.allows_command(spec)
+            && (commands::is_enabled(spec, &self.session, self.active_ids().map(|(_, id)| id))
             || spec.needs == commands::Needs::Undo && self.page_typing_unapplied()
             || spec.needs == commands::Needs::Redo && self.open_box_can_redo())
             && (spec.id != "edit.copy"
@@ -168,6 +169,9 @@ impl PdfCraftApp {
 
     fn execute_unguarded(&mut self, id: &str) -> bool {
         let Some(spec) = commands::command(id) else { return false };
+        if !self.profile.allows_command(spec) {
+            return false;
+        }
         if !self.command_enabled(spec) {
             let why = self.disabled_reason(spec);
             self.notify(why);

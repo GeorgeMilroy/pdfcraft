@@ -156,6 +156,10 @@ impl PdfCraftApp {
     /// Apply an edit to the active document. Returns `true` on success; failures are shown.
     pub fn apply_edit(&mut self, edit: Edit) -> bool {
         let Some((i, id)) = self.active_ids() else { return false };
+        if !self.profile.allows_edit(&edit) {
+            self.notify(tl!("Not allowed"));
+            return false;
+        }
         let label = edit.label();
         let target_arrange_image = match &edit {
             Edit::EditPageImage { page, index, change: pdfcraft_engine::ImageEdit::Arrange(_) } => {
@@ -378,6 +382,9 @@ impl PdfCraftApp {
 
     fn history_step(&mut self, undo: bool) {
         let Some((i, id)) = self.active_ids() else { return };
+        if self.profile.read_only {
+            return;
+        }
         if !self.close_text_editors(i, id) {
             return;
         }
