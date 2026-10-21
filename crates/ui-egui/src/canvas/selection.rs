@@ -180,7 +180,20 @@ enum SelectionAction {
 /// The selection bar's width before it has been laid out once (English labels).
 const SELECTION_BAR_GUESS: f32 = 520.0;
 
-/// Actions on an existing text selection, next to the selected words.
+impl SelectionAction {
+    /// The command whose availability in the profile shows the action.
+    fn command(self) -> &'static str {
+        match self {
+            Self::Note => "comment.note",
+            Self::Markup(tool) => tool.command(),
+            Self::Replace => "comment.replace",
+            Self::Copy => "edit.copy",
+        }
+    }
+}
+
+/// Actions on an existing text selection, next to the selected words. Only those the profile
+/// allows (by command id) show.
 pub(super) fn selection_actions(
     ui: &mut egui::Ui,
     viewport: Rect,
@@ -208,7 +221,18 @@ pub(super) fn selection_actions(
         return false;
     }
     let rect = xf.view_rect(last);
-    if !viewport.intersects(rect) {
+    let actions: Vec<(&str, SelectionAction)> = [
+        (tl!("Add comment"), SelectionAction::Note),
+        (tl!("Highlight"), SelectionAction::Markup(comments::CommentTool::Highlight)),
+        (tl!("Underline"), SelectionAction::Markup(comments::CommentTool::Underline)),
+        (tl!("Strikethrough"), SelectionAction::Markup(comments::CommentTool::StrikeOut)),
+        (tl!("Replace text"), SelectionAction::Replace),
+        (tl!("Copy"), SelectionAction::Copy),
+    ]
+    .into_iter()
+    .filter(|(_, action)| crate::dialogs::frame_profile(ui.ctx()).allows_id(action.command()))
+    .collect();
+    if actions.is_empty() || !viewport.intersects(rect) {
         return false;
     }
     let id = egui::Id::unique(("text-selection-actions", view.view_key()));
@@ -221,19 +245,11 @@ pub(super) fn selection_actions(
     egui::Area::new(id).order(egui::Order::Foreground).fixed_pos(pos2(x, y)).show(ui.ctx(), |ui| {
         egui::Frame::popup(ui.style()).show(ui, |ui| {
             ui.horizontal(|ui| {
-                for (label, action) in [
-                    (tl!("Add comment"), SelectionAction::Note),
-                    (tl!("Highlight"), SelectionAction::Markup(comments::CommentTool::Highlight)),
-                    (tl!("Underline"), SelectionAction::Markup(comments::CommentTool::Underline)),
-                    (tl!("Strikethrough"), SelectionAction::Markup(comments::CommentTool::StrikeOut)),
-                    (tl!("Replace text"), SelectionAction::Replace),
-                ] {
-                    if ui.add_enabled(can_comment, egui::Button::new(label)).clicked() {
+                for (label, action) in actions {
+                    let enabled = if matches!(action, SelectionAction::Copy) { can_copy } else { can_comment };
+                    if ui.add_enabled(enabled, egui::Button::new(label)).clicked() {
                         chosen = Some(action);
                     }
-                }
-                if ui.add_enabled(can_copy, egui::Button::new(tl!("Copy"))).clicked() {
-                    chosen = Some(SelectionAction::Copy);
                 }
             });
         });

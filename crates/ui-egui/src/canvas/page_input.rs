@@ -76,6 +76,7 @@ pub(super) fn page_tool_input(ui: &mut egui::Ui, view: &mut DocView, frame: &mut
         text_style,
         text_links,
         tool,
+        offers,
         ..
     } = frame.env;
     let PageSlot { i, xf, .. } = *slot;
@@ -102,6 +103,7 @@ pub(super) fn page_tool_input(ui: &mut egui::Ui, view: &mut DocView, frame: &mut
         pcx: &pcx,
         form,
         can_fill,
+        field_offers: offers.fields,
         can_modify,
         editing_content,
         preparing,
@@ -197,7 +199,7 @@ pub(super) fn page_tool_input(ui: &mut egui::Ui, view: &mut DocView, frame: &mut
         frame.out.open_table = frame.out.open_table.or(o.table);
         o.consumed || field_tool.is_some()
     } else {
-        tool == QuickTool::Select && !placing && crate::forms_ui::page_input(cx, form, can_fill, press, released_over, view)
+        tool == QuickTool::Select && !placing && crate::forms_ui::page_input(cx, form, can_fill, offers.fields, press, released_over, view)
     };
     // Redact draws boxes off text; so does Highlight (an area highlight, as in Acrobat).
     let area_tool = tool == QuickTool::Redact && can_modify || tool == QuickTool::Comment(comments::CommentTool::Highlight) && allowed;
@@ -252,9 +254,13 @@ pub(super) fn page_tool_input(ui: &mut egui::Ui, view: &mut DocView, frame: &mut
         }
     }
     let (link_owner, link_context) = (link_of(press.owner()), link_of(context));
-    let on_link = tool == QuickTool::Link && can_modify && crate::link_ui::page_input(cx, press == PagePress::Free, link_owner, link_context, view);
+    let on_link = tool == QuickTool::Link
+        && can_modify
+        && offers.link
+        && crate::link_ui::page_input(cx, press == PagePress::Free, link_owner, link_context, view);
     if tool == QuickTool::Select
         && can_modify
+        && offers.link
         && let Some(index) = link_context
     {
         view.links.context = Some((i, index));
@@ -357,6 +363,7 @@ fn tool_input(
         fill_text_size,
         fill_text_color,
         fill_text_border,
+        offers,
         ..
     } = frame.env;
     let PageSlot { i, xf, .. } = *slot;
@@ -380,6 +387,7 @@ fn tool_input(
     }
     if let QuickTool::Fill(ft) = tool
         && allowed
+        && offers.fill_tool
         && !over_mark
     {
         let input = crate::fill_sign::PageInput {
@@ -487,6 +495,8 @@ struct PageHits<'a> {
     pcx: &'a comments::PageCx<'a>,
     form: &'a [pdfcraft_engine::FormField],
     can_fill: bool,
+    /// The fields the profile offers to the pointer: the others are inert.
+    field_offers: crate::forms_ui::FieldOffers,
     can_modify: bool,
     /// Edit a PDF is open: added text and pictures can be picked up.
     editing_content: bool,
@@ -577,6 +587,7 @@ impl PageHits<'_> {
             pcx,
             form,
             can_fill,
+            field_offers,
             can_modify,
             editing_content,
             preparing,
@@ -611,7 +622,7 @@ impl PageHits<'_> {
         let fields = if preparing {
             crate::prepare::hit(xf, info, page, form, field_tool, prepare_allowed, &view.prepare, p)
         } else if tool == QuickTool::Select {
-            crate::forms_ui::hit(xf, info, page, form, tabs, can_fill, p)
+            crate::forms_ui::hit(xf, info, page, form, tabs, can_fill, field_offers, p)
         } else {
             None
         };
@@ -667,7 +678,7 @@ fn text_link_hit(view: &DocView, info: &DocInfo, xf: &PageXform, page: usize, p:
 
 /// Text layer: find matches, selection, I-beam and drag-to-select.
 pub(super) fn text_layer(ui: &mut egui::Ui, view: &mut DocView, frame: &mut PageFrame<'_>, slot: &PageSlot, input: &PageInput) {
-    let PageEnv { selects_text, tool, .. } = frame.env;
+    let PageEnv { selects_text, tool, offers, .. } = frame.env;
     let PageSlot { i, r, xf } = *slot;
     let PageFrame { resp, ptr, pointer, .. } = *frame;
     if let Some(text) = view.texts.get(&i).cloned() {
@@ -679,7 +690,18 @@ pub(super) fn text_layer(ui: &mut egui::Ui, view: &mut DocView, frame: &mut Page
             // The I-beam drops where a press would go to a link, an address written as page text
             // included (#4207) (ruling E: the tools that select a link's text show it there).
             let over_link = input.hover.as_ref().is_some_and(|h| matches!(h.owner, Owner::Link { .. } | Owner::TextLink { .. }));
-            let pointer = TextPointer { page: i, xf, rect: r, tool, resp, ptr: ptr.clone(), pointer: p, over_link, text_drag: input.text_drag };
+            let pointer = TextPointer {
+                page: i,
+                xf,
+                rect: r,
+                tool,
+                resp,
+                ptr: ptr.clone(),
+                pointer: p,
+                over_link,
+                text_drag: input.text_drag,
+                column_on: offers.column,
+            };
             text_pointer_input(ui, view, &text, pointer);
         }
     }
@@ -733,6 +755,8 @@ struct TextPointer<'a> {
     over_link: bool,
     /// The press's drag is the page's text's ([`PageInput::text_drag`]).
     text_drag: bool,
+    /// Alt-drag selects a column only when the profile offers Column select.
+    column_on: bool,
 }
 
 struct TextGesture<'a> {
@@ -752,10 +776,10 @@ struct TextGesture<'a> {
 }
 
 fn text_pointer_input(ui: &mut egui::Ui, view: &mut DocView, text: &PageText, pointer: TextPointer<'_>) {
-    let TextPointer { page, xf, rect, tool, resp, ptr, pointer: screen_pointer, over_link, text_drag } = pointer;
+    let TextPointer { page, xf, rect, tool, resp, ptr, pointer: screen_pointer, over_link, text_drag, column_on } = pointer;
     let (vx, vy) = xf.screen_to_view(screen_pointer);
     let over_text = text.glyph_at(vx, vy).is_some();
-    let column = tool == QuickTool::ColumnSelect || ui.input(|input| input.modifiers.alt);
+    let column = tool == QuickTool::ColumnSelect || column_on && ui.input(|input| input.modifiers.alt);
     let gesture = TextGesture { page, xf, rect, tool, ptr, resp, pointer: screen_pointer, vx, vy, over_text, over_link, text_drag, column };
     update_text_cursor(view, &gesture);
     update_selection_on_press(ui, view, text, &gesture);
@@ -906,6 +930,7 @@ pub(super) fn page_overlays(ui: &mut egui::Ui, view: &mut DocView, frame: &mut P
         table_preview,
         tool,
         unobstructed,
+        offers,
         ..
     } = frame.env;
     let PageSlot { i, r, xf } = *slot;
@@ -915,10 +940,11 @@ pub(super) fn page_overlays(ui: &mut egui::Ui, view: &mut DocView, frame: &mut P
     let pcx = comments::PageCx { page: i, xf: &xf, ptr, info, tool, prefs, allowed, hidden: comments_hidden, redact_mark, keys };
     // A press nobody holds picks the picture under it: a link's click follows the link only (ruling
     // 5), though its drag or double-click still lets the picked picture go, as does a drag the page
-    // it is over first sees, whichever page it began on.
+    // it is over first sees, whichever page it began on. Nothing is picked when the profile refuses
+    // copying.
     let pick_sees =
         matches!(input.press, PagePress::Free | PagePress::Mine(Owner::Link { .. })) || input.press == PagePress::Elsewhere && ptr.drag_started;
-    if tool != QuickTool::Select {
+    if tool != QuickTool::Select || !offers.copy {
         view.pending_pick = None;
     } else if pick_sees && !input.consumed {
         crate::image_pick::page_input(resp, &xf, i, info, doc, ptr, input.press == PagePress::Free, view);
