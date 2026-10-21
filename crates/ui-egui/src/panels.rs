@@ -5,6 +5,8 @@ use egui::{Align, Align2, Color32, CornerRadius, Layout, Rect, Sense, Stroke, po
 use pdfcraft_engine::catalog::{self, Availability, TOOL_GROUPS, ToolGroup, ToolItem};
 use pdfcraft_render::{DocInfo, FieldKind, OutlineItem};
 
+use crate::features::Feature;
+use crate::profile::UiProfile;
 use crate::theme::{self, Tokens};
 use crate::{LeftPanel, PdfCraftApp, RightPanel, icons, widgets};
 
@@ -12,6 +14,25 @@ const COLLAPSED_TOOLS: usize = 14;
 
 fn hue(g: &ToolGroup) -> Color32 {
     Color32::from_rgb(g.hue[0], g.hue[1], g.hue[2])
+}
+
+/// Whether the profile offers command `id`: allowed, and its feature on (comments-only turns off
+/// every feature but the comment ones, whatever a command's permission says).
+pub(crate) fn offers(profile: &UiProfile, id: &str) -> bool {
+    profile.allows_id(id) && crate::features::command_feature(id).is_none_or(|f| profile.allows_feature(f))
+}
+
+/// Whether a catalogue entry shows: [`UiProfile::shows_item`], and its command (or one of its
+/// actions) [`offers`]ed.
+fn item_shown(profile: &UiProfile, item: &catalog::ToolItem) -> bool {
+    profile.shows_item(item) && (offers(profile, item.command) || item.actions.iter().any(|a| offers(profile, a)))
+}
+
+/// Whether a tool group shows: not hidden, its feature on, and at least one entry shown.
+pub(crate) fn group_shown(profile: &UiProfile, g: &ToolGroup) -> bool {
+    profile.shows_group(g)
+        && crate::features::group_feature(g.id).is_none_or(|f| profile.allows_feature(f))
+        && g.sections.iter().flat_map(|s| s.items.iter()).any(|item| item_shown(profile, item))
 }
 
 pub fn left_panel(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
@@ -27,7 +48,7 @@ pub fn left_panel(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
             // Organize pages has its own panel whenever the grid shows (with a document open).
             _ if app.active.is_some() && crate::organize_panel::showing(app) => crate::organize_panel::panel(app, ui, &t),
             LeftPanel::AllTools => all_tools(app, ui, &t),
-            LeftPanel::Tool(id) => match catalog::group(id).filter(|g| !app.profile.hides_group(g.id)) {
+            LeftPanel::Tool(id) => match catalog::group(id).filter(|g| group_shown(&app.profile, g)) {
                 Some(g) => tool_detail(app, ui, &t, g),
                 None => app.left = LeftPanel::AllTools,
             },
@@ -70,7 +91,7 @@ fn all_tools(app: &mut PdfCraftApp, ui: &mut egui::Ui, t: &Tokens) {
     egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
         // The collapsed list counts the groups the profile shows, so hiding some never pushes the
         // rest behind View more.
-        let visible: Vec<&'static ToolGroup> = TOOL_GROUPS.iter().filter(|g| !app.profile.hides_group(g.id)).collect();
+        let visible: Vec<&'static ToolGroup> = TOOL_GROUPS.iter().filter(|g| group_shown(&app.profile, g)).collect();
         let shown = if app.all_tools_expanded { visible.len() } else { COLLAPSED_TOOLS.min(visible.len()) };
         for g in visible.iter().take(shown) {
             if tool_row(ui, t, g).clicked() {
@@ -181,11 +202,13 @@ fn tool_detail(app: &mut PdfCraftApp, ui: &mut egui::Ui, t: &Tokens, g: &'static
     }
     // Add a stamp: the palette.
     if g.id == "stamp" {
-        stamp_palette(app, ui, t);
+        if offers(&app.profile, "comment.stamp") {
+            stamp_palette(app, ui, t);
+        }
         return;
     }
     // Prepare a form: Preview fills the form as a reader would; Edit goes back.
-    if g.id == "form" {
+    if g.id == "form" && app.profile.allows_feature(Feature::FormDesign) {
         ui.horizontal(|ui| {
             let label = if app.form_preview { "Edit fields" } else { "Preview" };
             if widgets::pill_button(ui, tl!(label), app.form_preview).on_hover_text(tl!("Try the form as people filling it in will see it")).clicked()
@@ -210,7 +233,7 @@ fn tool_detail(app: &mut PdfCraftApp, ui: &mut egui::Ui, t: &Tokens, g: &'static
                 if g.id == "fill_sign" && (item.command.starts_with("sign.fill.signature") || item.command.starts_with("sign.fill.initials")) {
                     continue;
                 }
-                if !app.profile.allows_id(item.command) {
+                if !item_shown(&app.profile, item) {
                     continue;
                 }
                 let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 34.0), Sense::click());
@@ -271,10 +294,14 @@ fn tool_detail(app: &mut PdfCraftApp, ui: &mut egui::Ui, t: &Tokens, g: &'static
                 );
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.add_enabled_ui(marks > 0, |ui| widgets::pill_button(ui, tl!("Redact all"), true)).inner.clicked() {
+                if offers(&app.profile, "redact.apply")
+                    && ui.add_enabled_ui(marks > 0, |ui| widgets::pill_button(ui, tl!("Redact all"), true)).inner.clicked()
+                {
                     run = Some("redact.apply");
                 }
-                if ui.add_enabled_ui(marks > 0, |ui| widgets::pill_button(ui, tl!("Clear all"), false)).inner.clicked() {
+                if offers(&app.profile, "redact.clear")
+                    && ui.add_enabled_ui(marks > 0, |ui| widgets::pill_button(ui, tl!("Clear all"), false)).inner.clicked()
+                {
                     run = Some("redact.clear");
                 }
             });
@@ -299,7 +326,8 @@ const EDIT_OTHER_TOOLS: [&str; 3] = ["combine", "redact", "form"];
 /// Every item comes from the catalogue, so its label, icon and availability have one source.
 fn edit_panel(app: &mut PdfCraftApp, ui: &mut egui::Ui, t: &Tokens, g: &'static ToolGroup) {
     let items = || g.sections.iter().flat_map(|s| s.items.iter());
-    let item = |command: &str| items().find(|i| i.command == command);
+    let profile = app.profile.clone();
+    let item = |command: &str| items().find(|i| i.command == command).filter(|i| item_shown(&profile, i));
     let mut run = None;
     let mut tool = None;
     // Back to All tools only when Edit was opened from there; the Edit tab is its own way back.
@@ -314,7 +342,7 @@ fn edit_panel(app: &mut PdfCraftApp, ui: &mut egui::Ui, t: &Tokens, g: &'static 
         let title_width = (ui.available_width() - 2.0 * (26.0 + ui.spacing().item_spacing.x)).max(1.0);
         ui.add_sized([title_width, 26.0], egui::Label::new(egui::RichText::new(title).font(theme::semibold(15.5)).color(t.text)).truncate())
             .on_hover_text(title);
-        if icons::button(ui, "settings", 26.0, false, tl!("Preferences")).clicked() {
+        if offers(&app.profile, "app.preferences") && icons::button(ui, "settings", 26.0, false, tl!("Preferences")).clicked() {
             run = Some("app.preferences");
         }
         if icons::button(ui, "x", 26.0, false, tl!("Close panel")).clicked() {
@@ -324,15 +352,17 @@ fn edit_panel(app: &mut PdfCraftApp, ui: &mut egui::Ui, t: &Tokens, g: &'static 
     ui.add_space(2.0);
     ui.separator();
     ui.add_space(4.0);
-    // Several objects selected: how many, and how to move them. Acrobat's panel has no idle hint.
-    let count = app.active_ids().filter(|_| app.quick_tool == crate::QuickTool::EditText).map_or(0, |(i, _)| app.views[i].objects.count());
-    if count > 0 {
-        ui.label(crate::i18n::trn(crate::i18n::current(), count as u64, "{n} object selected", "{n} objects selected"));
-        ui.label(tl!("Drag the selection to move it. Esc clears the selection."));
-        ui.add_space(6.0);
+    if offers(&app.profile, "edit.edit_text") {
+        // Several objects selected: how many, and how to move them. Acrobat's panel has no idle hint.
+        let count = app.active_ids().filter(|_| app.quick_tool == crate::QuickTool::EditText).map_or(0, |(i, _)| app.views[i].objects.count());
+        if count > 0 {
+            ui.label(crate::i18n::trn(crate::i18n::current(), count as u64, "{n} object selected", "{n} objects selected"));
+            ui.label(tl!("Drag the selection to move it. Esc clears the selection."));
+            ui.add_space(6.0);
+        }
+        // Format text at the top while text is selected or being added.
+        format_section(app, ui, t);
     }
-    // Format text at the top while text is selected or being added.
-    format_section(app, ui, t);
     egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
         widgets::section_title(ui, tl!("Modify page"));
         ui.horizontal(|ui| {
@@ -360,8 +390,13 @@ fn edit_panel(app: &mut PdfCraftApp, ui: &mut egui::Ui, t: &Tokens, g: &'static 
         }
 
         widgets::section_title(ui, tl!("Add content"));
-        let content: Vec<_> =
-            g.sections.iter().filter(|s| s.title == "Add content").flat_map(|s| s.items.iter()).filter(|i| i.command != "edit.edit_text").collect();
+        let content: Vec<_> = g
+            .sections
+            .iter()
+            .filter(|s| s.title == "Add content")
+            .flat_map(|s| s.items.iter())
+            .filter(|i| i.command != "edit.edit_text" && item_shown(&app.profile, i))
+            .collect();
         let more_id = egui::Id::new("edit_panel_more");
         let more = ui.data(|d| d.get_temp::<bool>(more_id)).unwrap_or(false);
         let shown = if more { content.len() } else { EDIT_CONTENT_SHOWN.min(content.len()) };
@@ -392,7 +427,7 @@ fn edit_panel(app: &mut PdfCraftApp, ui: &mut egui::Ui, t: &Tokens, g: &'static 
         }
 
         widgets::section_title(ui, tl!("Other options"));
-        for other in EDIT_OTHER_TOOLS.iter().filter_map(|id| catalog::group(id)) {
+        for other in EDIT_OTHER_TOOLS.iter().filter(|id| app.shows_tool_group(id)).filter_map(|id| catalog::group(id)) {
             if edit_row(ui, t, other.icon, tl!(other.label), other.availability).clicked() {
                 tool = Some(other.id);
             }
@@ -418,7 +453,7 @@ fn actions_menu(app: &PdfCraftApp, ui: &egui::Ui, resp: &egui::Response, item: &
     egui::Popup::menu(resp).show(|ui| {
         ui.set_min_width(180.0);
         for (n, id) in item.actions.iter().enumerate() {
-            let Some(spec) = pdfcraft_engine::commands::command(id) else { continue };
+            let Some(spec) = pdfcraft_engine::commands::command(id).filter(|s| offers(&app.profile, s.id)) else { continue };
             // Add stays usable with no document open: it asks for a file first.
             let enabled = (n == 0 && app.active.is_none()) || app.command_enabled(spec);
             let label = crate::i18n::menu_label(spec.id, spec.label);
@@ -671,7 +706,10 @@ pub fn right_panel(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
     let mut a11y_action: Option<crate::a11y_ui::PanelAction> = None;
     let mut compare_action: Option<crate::compare_ui::PanelAction> = None;
     let mut bm_rename = app.bookmark_rename.clone();
-    let bm_editable = app.session.get(id).is_some_and(|d| d.allows_assembly() && d.read_only_reason.is_none());
+    let assembly = app.session.get(id).is_some_and(|d| d.allows_assembly() && d.read_only_reason.is_none());
+    // What the document permits greys out; what the profile refuses doesn't show.
+    let bm_editable = assembly && app.profile.allows_feature(Feature::Bookmarks);
+    let pages_editable = assembly && app.profile.allows_feature(Feature::Pages);
     // Prepare a form is open: the Fields panel orders tabs.
     let preparing = app.is_preparing();
     {
@@ -683,6 +721,7 @@ pub fn right_panel(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
         let a11y = &mut app.a11y;
         let tags_state = &mut app.tags_state;
         let compare = &app.compare;
+        let profile = &app.profile;
         let comment_allowed = doc.allows_annotation();
         // A dialog or the palette owns the keyboard: the panel leaves Escape to it.
         let modal = app.dialog.is_some() || app.palette_open;
@@ -735,7 +774,10 @@ pub fn right_panel(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
                             let more = icons::button(ui, "ellipsis", 26.0, false, tl!("Bookmark options"));
                             egui::Popup::menu(&more).show(|ui| {
                                 ui.set_min_width(200.0);
-                                if bm_editable && ui.button(tl!("New bookmarks from structure")).clicked() {
+                                if bm_editable
+                                    && offers(profile, "bookmark.from_structure")
+                                    && ui.button(tl!("New bookmarks from structure")).clicked()
+                                {
                                     bm_action = Some(BmAction::FromStructure);
                                     ui.close();
                                 }
@@ -764,7 +806,11 @@ pub fn right_panel(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
                             });
                         }
                         let new_tip = crate::commands::command_tip(ui.ctx(), tl!("New bookmark ({key})"), "bookmark.add");
-                        if panel == RightPanel::Bookmarks && bm_editable && icons::button(ui, "bookmark-plus", 26.0, false, &new_tip).clicked() {
+                        if panel == RightPanel::Bookmarks
+                            && bm_editable
+                            && offers(profile, "bookmark.add")
+                            && icons::button(ui, "bookmark-plus", 26.0, false, &new_tip).clicked()
+                        {
                             bm_action = Some(BmAction::New);
                         }
                     });
@@ -838,7 +884,7 @@ pub fn right_panel(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
                             ui.label(tl!("Some bookmarks are not shown here: the panel lists a limited number, nested a limited depth."));
                         }
                     }
-                    RightPanel::Pages => pages(ui, &t, info, view, modal, bm_editable, &mut nav),
+                    RightPanel::Pages => pages(ui, &t, info, view, modal, pages_editable, profile, &mut nav),
                     RightPanel::Fields => field_properties = fields(ui, &t, info, &doc.form, preparing, &mut view.prepare, &mut nav, &mut panel_edit),
                     RightPanel::Layers => {
                         if info.layers.is_empty() {
@@ -1271,7 +1317,19 @@ fn thumbnail_size(ui: &mut egui::Ui, t: &Tokens, view: &mut crate::DocView, enab
 /// (the selection page commands and Print act on) without moving the document. Right-click
 /// offers Extract, Cut, Copy and Paste on the selection, or on the page clicked; dragging
 /// moves the selection, or the page grabbed, to the gap it is dropped on.
-fn pages(ui: &mut egui::Ui, t: &Tokens, info: &DocInfo, view: &mut crate::DocView, modal: bool, editable: bool, nav: &mut Option<Nav>) {
+/// `editable`: the document and the profile let pages change; each command the profile refuses
+/// is left out.
+#[allow(clippy::too_many_arguments)]
+fn pages(
+    ui: &mut egui::Ui,
+    t: &Tokens,
+    info: &DocInfo,
+    view: &mut crate::DocView,
+    modal: bool,
+    editable: bool,
+    profile: &UiProfile,
+    nav: &mut Option<Nav>,
+) {
     // Escape drops the selection while the pointer is over the panel and nothing else wants the key.
     if !modal
         && !view.selected.is_empty()
@@ -1284,6 +1342,7 @@ fn pages(ui: &mut egui::Ui, t: &Tokens, info: &DocInfo, view: &mut crate::DocVie
     // Delete (or Backspace) deletes the selection, or the current page, likewise.
     if !modal
         && editable
+        && offers(profile, "page.delete")
         && !ui.ctx().egui_wants_keyboard_input()
         && ui.rect_contains_pointer(ui.clip_rect())
         && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Delete) || i.consume_key(egui::Modifiers::NONE, egui::Key::Backspace))
@@ -1366,31 +1425,31 @@ fn pages(ui: &mut egui::Ui, t: &Tokens, info: &DocInfo, view: &mut crate::DocVie
                 if !view.target_pages().contains(&i) {
                     view.click_page(i, egui::Modifiers::NONE, true);
                 }
-                if ui.button(tl!("Extract pages")).clicked() {
+                if offers(profile, "page.extract") && ui.button(tl!("Extract pages")).clicked() {
                     view.pending_action = Some(crate::canvas::ViewAction::Extract);
                     ui.close();
                 }
-                if ui.add_enabled(editable, egui::Button::new(tl!("Replace pages…"))).clicked() {
+                if offers(profile, "page.replace") && ui.add_enabled(editable, egui::Button::new(tl!("Replace pages…"))).clicked() {
                     view.pending_action = Some(crate::canvas::ViewAction::ReplacePages);
                     ui.close();
                 }
                 ui.separator();
-                if ui.add_enabled(editable, egui::Button::new(tl!("Cut"))).clicked() {
+                if offers(profile, "page.cut") && ui.add_enabled(editable, egui::Button::new(tl!("Cut"))).clicked() {
                     view.pending_action = Some(crate::canvas::ViewAction::CopyPages { cut: true });
                     ui.close();
                 }
-                if ui.button(tl!("Copy")).clicked() {
+                if offers(profile, "page.copy") && ui.button(tl!("Copy")).clicked() {
                     view.pending_action = Some(crate::canvas::ViewAction::CopyPages { cut: false });
                     ui.close();
                 }
-                if ui.add_enabled(editable, egui::Button::new(tl!("Paste after"))).clicked() {
+                if offers(profile, "page.paste") && ui.add_enabled(editable, egui::Button::new(tl!("Paste after"))).clicked() {
                     view.pending_action = Some(crate::canvas::ViewAction::PastePages);
                     ui.close();
                 }
                 ui.separator();
                 let some_left = view.target_pages().len() < count;
                 // Never every page: a document keeps at least one.
-                if ui.add_enabled(editable && some_left, egui::Button::new(tl!("Delete pages"))).clicked() {
+                if offers(profile, "page.delete") && ui.add_enabled(editable && some_left, egui::Button::new(tl!("Delete pages"))).clicked() {
                     delete_pages(view, count);
                     ui.close();
                 }
@@ -1399,7 +1458,7 @@ fn pages(ui: &mut egui::Ui, t: &Tokens, info: &DocInfo, view: &mut crate::DocVie
         ui.add_space(4.0);
     }
     page_drag(ui, t, view, &rows, dropped);
-    file_drop(ui, t, view, &rows, editable && !modal);
+    file_drop(ui, t, view, &rows, editable && offers(profile, "page.insert") && !modal);
 }
 
 /// Files dragged in from outside go to the gap under the pointer: remember where the panel is
