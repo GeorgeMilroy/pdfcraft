@@ -10,9 +10,29 @@ use crate::{CloseRequest, Dialog, PdfCraftApp, PropsTab, panels::human_size, wid
 const INFO_KEYS: [&str; 4] = ["Title", "Author", "Subject", "Keywords"];
 
 pub fn show(app: &mut PdfCraftApp, ctx: &egui::Context) {
+    publish_profile(app, ctx);
     dialogs(app, ctx);
     // Last, so it sits above Document Properties when Security's Unlock… asked for it.
     unlock(app, ctx);
+}
+
+/// Where [`publish_profile`] keeps the profile.
+fn profile_id() -> egui::Id {
+    egui::Id::new("ui_profile")
+}
+
+/// Hand the profile to panel bodies drawn without the app (Signatures, Accessibility, Tags),
+/// through [`frame_profile`]; republished only when it changed.
+fn publish_profile(app: &PdfCraftApp, ctx: &egui::Context) {
+    if *frame_profile(ctx) != app.profile {
+        ctx.data_mut(|d| d.insert_temp(profile_id(), std::sync::Arc::new(app.profile.clone())));
+    }
+}
+
+/// The profile as of the last time the dialogs were drawn (every frame); the default profile
+/// before the first.
+pub(crate) fn frame_profile(ctx: &egui::Context) -> std::sync::Arc<crate::profile::UiProfile> {
+    ctx.data(|d| d.get_temp(profile_id())).unwrap_or_default()
 }
 
 fn dialogs(app: &mut PdfCraftApp, ctx: &egui::Context) {
@@ -84,6 +104,7 @@ fn dialogs(app: &mut PdfCraftApp, ctx: &egui::Context) {
     let mut images_now = false;
     let mut stamp_now = false;
     let mut alt_now = false;
+    let mut arm_fill: Option<&'static str> = None;
     let t = Tokens::get(ctx);
     let mut close = false;
     let mut next = dialog;
@@ -123,6 +144,10 @@ fn dialogs(app: &mut PdfCraftApp, ctx: &egui::Context) {
                 });
                 ui.separator();
                 let units = app.units;
+                // Without content editing the fields only show; opening a revision opens a tab.
+                let edit_content = app.profile.allows_feature(crate::features::Feature::EditContent);
+                let open_files = app.profile.allows_feature(crate::features::Feature::App);
+                let allows = |id: &str| app.profile.allows_id(id);
                 let Some((_, id)) = app.active_ids() else { return };
                 let Some(doc) = app.session.get(id) else { return };
                 let i = &doc.info;
@@ -142,7 +167,7 @@ fn dialogs(app: &mut PdfCraftApp, ctx: &egui::Context) {
                         PropsTab::Description => {
                             row(ui, "File", crate::bidi::visual(&doc.name).into_owned());
                             match app.props_draft.as_mut() {
-                                Some((_, draft)) if doc.allows_modification() => {
+                                Some((_, draft)) if doc.allows_modification() && edit_content => {
                                     for (k, v) in INFO_KEYS.iter().zip(draft.iter_mut()) {
                                         let l = ui.label(egui::RichText::new(tl!(k)).color(t.text_muted));
                                         ui.add(widgets::line(v).desired_width(420.0).background_color(t.field).id_salt(("info", *k)))
@@ -162,7 +187,7 @@ fn dialogs(app: &mut PdfCraftApp, ctx: &egui::Context) {
                         }
                         PropsTab::InitialView => {
                             use pdfcraft_engine::{InitialLayout as L, Magnification as M, Navigation as N};
-                            let editable = doc.allows_modification();
+                            let editable = doc.allows_modification() && edit_content;
                             let pages = i.pages.len();
                             let Some((_, v)) = app.view_draft.as_mut() else { return };
                             ui.label(egui::RichText::new(tl!("Layout and Magnification")).font(theme::semibold(12.5)));
@@ -273,7 +298,8 @@ fn dialogs(app: &mut PdfCraftApp, ctx: &egui::Context) {
                             None => {
                                 row(ui, "Security method", tl!("No security").to_string());
                                 row(ui, "Restrictions", tl!("None — everything is allowed").to_string());
-                                if doc.allows_security_change() && ui.button(tl!("Protect using password…")).clicked() {
+                                if doc.allows_security_change() && allows("protect.password") && ui.button(tl!("Protect using password…")).clicked()
+                                {
                                     link_command = Some("protect.password");
                                 }
                             }
@@ -294,13 +320,13 @@ fn dialogs(app: &mut PdfCraftApp, ctx: &egui::Context) {
                                 // A restricted document asks for its permissions password first.
                                 if doc.allows_security_change() || doc.can_unlock() {
                                     ui.horizontal(|ui| {
-                                        if doc.can_unlock() && ui.button(tl!("Unlock…")).clicked() {
+                                        if doc.can_unlock() && allows("protect.unlock") && ui.button(tl!("Unlock…")).clicked() {
                                             link_command = Some("protect.unlock");
                                         }
-                                        if ui.button(tl!("Change settings…")).clicked() {
+                                        if allows("protect.password") && ui.button(tl!("Change settings…")).clicked() {
                                             link_command = Some("protect.password");
                                         }
-                                        if ui.button(tl!("Remove security")).clicked() {
+                                        if allows("protect.remove") && ui.button(tl!("Remove security")).clicked() {
                                             link_command = Some("protect.remove");
                                         }
                                     });
@@ -360,7 +386,7 @@ fn dialogs(app: &mut PdfCraftApp, ctx: &egui::Context) {
                             row(ui, "JavaScript", yes(i.has_javascript));
                             // Each incremental update is a revision; earlier ones open as their own document.
                             let ends = doc.revision_ends();
-                            if ends.len() > 1 {
+                            if ends.len() > 1 && open_files {
                                 ui.label(egui::RichText::new(tl!("Revisions")).color(t.text_muted));
                                 // Reserve the full wrapped height before the grid starts the next row.
                                 ui.vertical(|ui| {
@@ -381,7 +407,7 @@ fn dialogs(app: &mut PdfCraftApp, ctx: &egui::Context) {
                             }
                             // Reading Options: binding and language.
                             if let Some((_, v)) = app.view_draft.as_mut() {
-                                let editable = doc.allows_modification();
+                                let editable = doc.allows_modification() && edit_content;
                                 ui.label(egui::RichText::new(tl!("Binding")).color(t.text_muted));
                                 ui.add_enabled_ui(editable, |ui| {
                                     ui.horizontal(|ui| {
@@ -747,7 +773,8 @@ fn dialogs(app: &mut PdfCraftApp, ctx: &egui::Context) {
                     close = true;
                     return;
                 };
-                let (done, action) = crate::sign_ui::cert_viewer(ui, v, &trusted, &t);
+                let manage = app.profile.allows_feature(crate::features::Feature::DigitalSignatures);
+                let (done, action) = crate::sign_ui::cert_viewer(ui, v, &trusted, &t, manage);
                 close = done;
                 match action {
                     Some(crate::sign_ui::CertAction::Trust(c)) => app.trust_certificate(*c),
@@ -865,7 +892,8 @@ fn dialogs(app: &mut PdfCraftApp, ctx: &egui::Context) {
                 let view = &mut app.views[i];
                 view.set_print_grayscale(app.print_draft.grayscale);
                 view.queue_print_previews(&rasters);
-                let (go, cancel) = crate::print_ui::body(ui, &mut app.print_draft, &t, &sizes, &labels, &mut |p| {
+                let save_pdf = app.profile.allows_feature(crate::features::Feature::Download);
+                let (go, cancel) = crate::print_ui::body(ui, &mut app.print_draft, &t, &sizes, &labels, save_pdf, &mut |p| {
                     view.need_thumbnail(p, true);
                     view.page_preview(p)
                 });
@@ -930,7 +958,8 @@ fn dialogs(app: &mut PdfCraftApp, ctx: &egui::Context) {
                         app.signature = d.saved();
                         crate::fill_sign::FillTool::Signature
                     };
-                    app.quick_tool = crate::QuickTool::Fill(tool);
+                    // Armed as its command would arm it, so the profile has its say.
+                    arm_fill = Some(tool.command());
                     app.toast = None;
                 }
                 close = apply || cancel;
@@ -1114,9 +1143,10 @@ fn dialogs(app: &mut PdfCraftApp, ctx: &egui::Context) {
                     ZOOM_OUT,
                 };
                 // Registered commands first (always in sync with the real bindings), then the
-                // keys the document view handles itself.
+                // keys the document view handles itself; only what the profile lets run.
                 let mut rows: Vec<(String, String)> = pdfcraft_engine::commands::COMMANDS
                     .iter()
+                    .filter(|c| app.profile.allows_command(c))
                     .filter_map(|c| {
                         c.shortcut.map(|k| (crate::commands::shortcut_label(ui.ctx(), k), tl!(c.label).trim_end_matches('…').to_string()))
                     })
@@ -1129,24 +1159,31 @@ fn dialogs(app: &mut PdfCraftApp, ctx: &egui::Context) {
                     tl!("Zoom in / out (also pinch or {key}-scroll)"),
                     &[("key", crate::commands::command_modifier_label(ui.ctx()))],
                 );
-                for (k, v) in [
-                    (pair(FIND_NEXT, FIND_PREV), tl!("Next / previous match").to_string()),
-                    (key(COPY), tl!("Copy selected text").to_string()),
-                    (named("Double-click"), tl!("Select a word").to_string()),
-                    (crate::i18n::key_name("Esc").to_string(), tl!("Clear selection / close find").to_string()),
-                    (key(ACTUAL_SIZE), tl!("Actual size").to_string()),
-                    (key(PAGE_LEVEL), tl!("Zoom to page level").to_string()),
-                    (key(FIT_WIDTH), tl!("Fit to width").to_string()),
-                    (pair(ZOOM_IN, ZOOM_OUT), scroll),
-                    (pair(ROTATE_CW, ROTATE_CCW), tl!("Rotate view").to_string()),
-                    (format!("{} / {}", crate::i18n::key_name("Home"), crate::i18n::key_name("End")), tl!("First / last page").to_string()),
-                    (format!("← / →, {}", pair(PAGE_PREV, PAGE_NEXT)), tl!("Previous / next page").to_string()),
-                    (named("V"), tl!("Select (V)").to_string()),
-                    (named("H / Space (hold)"), tl!("Hand (H)").to_string()),
-                    (crate::i18n::key_name("Delete").to_string(), tl!("Delete selected pages (Organize)").to_string()),
-                    (key(SELECT_ALL), tl!("Select all pages (Organize)").to_string()),
+                use crate::features::Feature as F;
+                for (k, v, feature) in [
+                    (pair(FIND_NEXT, FIND_PREV), tl!("Next / previous match").to_string(), F::Search),
+                    (key(COPY), tl!("Copy selected text").to_string(), F::Copy),
+                    (named("Double-click"), tl!("Select a word").to_string(), F::Viewer),
+                    (crate::i18n::key_name("Esc").to_string(), tl!("Clear selection / close find").to_string(), F::Viewer),
+                    (key(ACTUAL_SIZE), tl!("Actual size").to_string(), F::Viewer),
+                    (key(PAGE_LEVEL), tl!("Zoom to page level").to_string(), F::Viewer),
+                    (key(FIT_WIDTH), tl!("Fit to width").to_string(), F::Viewer),
+                    (pair(ZOOM_IN, ZOOM_OUT), scroll, F::Viewer),
+                    (pair(ROTATE_CW, ROTATE_CCW), tl!("Rotate view").to_string(), F::Viewer),
+                    (
+                        format!("{} / {}", crate::i18n::key_name("Home"), crate::i18n::key_name("End")),
+                        tl!("First / last page").to_string(),
+                        F::Viewer,
+                    ),
+                    (format!("← / →, {}", pair(PAGE_PREV, PAGE_NEXT)), tl!("Previous / next page").to_string(), F::Viewer),
+                    (named("V"), tl!("Select (V)").to_string(), F::Viewer),
+                    (named("H / Space (hold)"), tl!("Hand (H)").to_string(), F::Viewer),
+                    (crate::i18n::key_name("Delete").to_string(), tl!("Delete selected pages (Organize)").to_string(), F::Pages),
+                    (key(SELECT_ALL), tl!("Select all pages (Organize)").to_string(), F::Pages),
                 ] {
-                    rows.push((k, v));
+                    if app.profile.allows_feature(feature) {
+                        rows.push((k, v));
+                    }
                 }
                 egui::ScrollArea::vertical().max_height(460.0).show(ui, |ui| {
                     egui::Grid::new("keys").num_columns(2).spacing([24.0, 6.0]).show(ui, |ui| {
@@ -1208,7 +1245,10 @@ fn dialogs(app: &mut PdfCraftApp, ctx: &egui::Context) {
                             });
                         }
                         ui.add_space(6.0);
-                        if let Some(cmd) = widgets::community_links(ui) {
+                        // The links are commands (help.*): shown only when the profile lets every one run.
+                        if pdfcraft_engine::links::LINKS.iter().all(|l| app.profile.allows_id(l.command))
+                            && let Some(cmd) = widgets::community_links(ui)
+                        {
                             link_command = Some(cmd);
                         }
                     }
@@ -1216,7 +1256,8 @@ fn dialogs(app: &mut PdfCraftApp, ctx: &egui::Context) {
             }
         }
         ui.add_space(16.0);
-        let changed = draft_changes(app).is_some_and(|c| !c.is_empty());
+        // The Properties fields only show without content editing: Close, never OK.
+        let changed = app.profile.allows_feature(crate::features::Feature::EditContent) && draft_changes(app).is_some_and(|c| !c.is_empty());
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             if dialog == Dialog::Recovery {
                 if widgets::pill_button(ui, tl!("Recover"), true).clicked() {
@@ -1442,6 +1483,9 @@ fn dialogs(app: &mut PdfCraftApp, ctx: &egui::Context) {
     if let Some(cmd) = link_command {
         app.execute(cmd);
     }
+    if let Some(cmd) = arm_fill {
+        app.execute(cmd);
+    }
     if let Some(n) = open_revision {
         app.open_revision(n);
     }
@@ -1532,9 +1576,15 @@ impl PromptButton {
 /// the button chosen when the prompt opens, so Enter saves; the arrow keys and Tab / Shift+Tab move
 /// the choice, and Enter or Space press the chosen button. Escape cancels. Don't save also has
 /// ⌘D / Ctrl+D, the macOS convention, and Alt+D / Alt+N, the mnemonics Windows and Linux desktops
-/// use for it. Returns the answer once one is given.
+/// use for it. Without Save (the profile refuses saving) the choice starts on Cancel and moves only
+/// between Don't save and Cancel, so no key saves. Returns the answer once one is given.
 pub(crate) fn save_prompt_key(ctx: &egui::Context, chosen: &mut PromptButton) -> Option<Option<bool>> {
     use egui::{Key, Modifiers};
+    let can_save = frame_profile(ctx).allows_save();
+    let offered = |b: PromptButton| can_save || b != PromptButton::Save;
+    if !offered(*chosen) {
+        *chosen = PromptButton::Cancel;
+    }
     ctx.input_mut(|i| {
         if i.consume_key(Modifiers::NONE, Key::Enter) || i.consume_key(Modifiers::NONE, Key::Space) {
             return Some(chosen.answer());
@@ -1546,14 +1596,19 @@ pub(crate) fn save_prompt_key(ctx: &egui::Context, chosen: &mut PromptButton) ->
             return Some(Some(false));
         }
         // Shift+Tab before Tab: a key press matches a pattern that asks for fewer modifiers.
-        if i.consume_key(Modifiers::SHIFT, Key::Tab) {
-            *chosen = chosen.cycle(true);
-        } else if i.consume_key(Modifiers::NONE, Key::Tab) {
-            *chosen = chosen.cycle(false);
+        let back = i.consume_key(Modifiers::SHIFT, Key::Tab);
+        if back || i.consume_key(Modifiers::NONE, Key::Tab) {
+            *chosen = chosen.cycle(back);
+            if !offered(*chosen) {
+                *chosen = chosen.cycle(back);
+            }
         }
         for (key, by) in [(Key::ArrowLeft, -1), (Key::ArrowUp, -1), (Key::ArrowRight, 1), (Key::ArrowDown, 1)] {
             if i.consume_key(Modifiers::NONE, key) {
-                *chosen = chosen.step(by);
+                let to = chosen.step(by);
+                if offered(to) {
+                    *chosen = to;
+                }
             }
         }
         None
@@ -1597,7 +1652,8 @@ fn save_prompt(app: &mut PdfCraftApp, ctx: &egui::Context) {
         ui.add_space(14.0);
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             let chosen = app.save_prompt_button;
-            if widgets::pill_button_marked(ui, tl!("Save"), true, chosen == PromptButton::Save).clicked() {
+            // A profile that refuses saving leaves Don't save and Cancel.
+            if app.profile.allows_save() && widgets::pill_button_marked(ui, tl!("Save"), true, chosen == PromptButton::Save).clicked() {
                 choice = Some(Some(true));
             }
             if widgets::pill_button_marked(ui, tl!("Cancel"), false, chosen == PromptButton::Cancel).clicked() {
