@@ -103,14 +103,15 @@ fn combo<T: PartialEq + Copy>(ui: &mut egui::Ui, id: &str, name: &str, value: &m
         .accessible_name(name);
 }
 
-/// Draw the dialog. `thumb` gives a page's thumbnail texture when there is one. Returns
-/// (print, cancel).
+/// Draw the dialog. `save_pdf` offers Save as PDF among the printers (the profile allows writing
+/// copies). `thumb` gives a page's thumbnail texture when there is one. Returns (print, cancel).
 pub(crate) fn body(
     ui: &mut egui::Ui,
     d: &mut PrintDraft,
     t: &Tokens,
     sizes: &[(f64, f64)],
     labels: &[String],
+    save_pdf: bool,
     thumb: &mut dyn FnMut(usize) -> Option<egui::TextureId>,
 ) -> (bool, bool) {
     ui.set_width(820.0);
@@ -149,6 +150,7 @@ pub(crate) fn body(
                     let shown = match d.printer.as_deref() {
                         Some(p) => printer_label(p),
                         None if still_looking(d) => tl!("Looking for printers…").to_string(),
+                        None if !save_pdf => String::new(),
                         None => tl!("Save as PDF").to_string(),
                     };
                     craft_ui::ComboBox::from_id_salt("printer").selected_text(shown).width(260.0).show_ui(ui, |ui| {
@@ -166,7 +168,7 @@ pub(crate) fn body(
                         }
                         // Chosen even when it was already the selection, so the list arriving
                         // later doesn't replace it with the default printer.
-                        if ui.selectable_value(&mut d.printer, None, tl!("Save as PDF")).clicked() {
+                        if save_pdf && ui.selectable_value(&mut d.printer, None, tl!("Save as PDF")).clicked() {
                             d.printer_picked = true;
                         }
                     })
@@ -696,9 +698,12 @@ pub(crate) fn body(
     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
         let looking = still_looking(d);
         let waiting_paper = d.papers_loading();
-        let label = if d.printer.is_some() || looking { tl!("Print") } else { tl!("Save as PDF") };
+        let label = if d.printer.is_some() || looking || !save_pdf { tl!("Print") } else { tl!("Save as PDF") };
+        let destination = d.printer.is_some() || save_pdf;
         if ui
-            .add_enabled_ui(settings.is_ok() && !sheets.is_empty() && !looking && !waiting_paper, |ui| widgets::pill_button(ui, label, true))
+            .add_enabled_ui(settings.is_ok() && !sheets.is_empty() && !looking && !waiting_paper && destination, |ui| {
+                widgets::pill_button(ui, label, true)
+            })
             .inner
             .clicked()
         {

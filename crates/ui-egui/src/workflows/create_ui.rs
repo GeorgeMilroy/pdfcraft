@@ -292,6 +292,9 @@ impl PdfCraftApp {
         result: Result<(Arc<Vec<u8>>, String), pdfcraft_engine::EditError>,
         destination: Option<String>,
     ) {
+        if !self.profile.allows_feature(crate::features::Feature::Download) {
+            return;
+        }
         let Some(doc) = self.session.get(id) else { return };
         let (before, name) = (doc.bytes.len(), optimized_name(&doc.name, kind));
         #[cfg(not(target_arch = "wasm32"))]

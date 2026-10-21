@@ -394,6 +394,10 @@ impl PdfCraftApp {
 
     /// [`Self::start_optimize`] for document `id`, saving to `destination` if that's known already.
     pub(crate) fn run_optimize(&mut self, id: DocId, kind: OptimizeKind, settings: &Settings, discard: &[Hidden], destination: Option<String>) {
+        // The optimized copy is a file written beside the document.
+        if !self.profile.allows_feature(crate::features::Feature::Download) {
+            return;
+        }
         // What's typed in a form field is part of the document (#166).
         if !self.commit_form_typing() {
             return;

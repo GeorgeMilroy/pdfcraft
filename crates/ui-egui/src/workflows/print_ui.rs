@@ -181,8 +181,12 @@ impl Drop for WakeOnExit {
 }
 
 impl PdfCraftApp {
-    /// Open the Print dialog, preselecting the default printer and reading papers in the background.
+    /// Open the Print dialog, preselecting the default printer and reading papers in the background
+    /// (File ▸ Print, or a script's `print()`), when the profile allows printing.
     pub fn open_print(&mut self) {
+        if !self.profile.allows_feature(crate::features::Feature::Print) {
+            return;
+        }
         let Some((i, _)) = self.active_ids() else { return };
         let (printers, printers_loading) = match self.printer_source.clone() {
             // The list from the last time the dialog opened, until the fresh one arrives.
@@ -625,6 +629,9 @@ impl PdfCraftApp {
     /// a preset path returns `true` once the save picker is showing; the file is written on a
     /// later frame, when the user has chosen where.
     pub fn print_now(&mut self) -> bool {
+        if !self.profile.allows_feature(crate::features::Feature::Print) {
+            return false;
+        }
         if still_looking(&self.print_draft) || self.print_draft.papers_loading() {
             return false;
         }
@@ -673,6 +680,8 @@ impl PdfCraftApp {
                 }
                 self.send_to_printer(printer, bytes, job)
             }
+            // Save as PDF writes a copy.
+            None if !self.profile.allows_feature(crate::features::Feature::Download) => false,
             None => self.save_print_pdf(&name, bytes),
         };
         // What this printer printed with is what it starts with next time (#2001).
