@@ -40,7 +40,7 @@ pub use geometry::{drawn_text_box_rect, snug_text_box_rect, text_box_rect};
 use input::hover_tip;
 pub(crate) use input::{anchor, context, context_hit, describe, hit, keys, moving_on, nudge_keys, page_after_text, page_input, tips_shown};
 pub use menu::{CanvasAction, fill_picker, recent_custom_colours, remember_custom_colour, status_badge, swatch_grid};
-pub(crate) use menu::{MenuRights, attachment_items, border_colour_button, context_menu, quick_bar_colour, quick_bar_controls};
+pub(crate) use menu::{MenuRights, attachment_items, attachment_offers, border_colour_button, context_menu, quick_bar_colour, quick_bar_controls};
 #[cfg(test)]
 use menu::{RECENT_CUSTOM, same_colour};
 pub(crate) use paint::paint_page;
@@ -51,7 +51,7 @@ pub(crate) use popups::popups;
 use state::after_delete;
 use state::login_name;
 pub use state::{CommentView, Composer, ComposerKind, Gesture, SortBy};
-pub(crate) use state::{EditorFocus, PageCx};
+pub(crate) use state::{EditorFocus, MenuGate, PageCx};
 
 /// Acrobat's selection blue for annotation frames and handles (11-visual-spec §5).
 const SELECT_BLUE: Color32 = Color32::from_rgb(0x14, 0x73, 0xE6);

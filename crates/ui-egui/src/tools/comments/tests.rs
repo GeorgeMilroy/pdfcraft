@@ -104,6 +104,7 @@ fn an_upright_note_on_a_turned_page_is_in_view_where_it_is_drawn() {
             tool: QuickTool::Select,
             prefs: &prefs,
             allowed: true,
+            profile: &crate::profile::UiProfile::default(),
             hidden: false,
             redact_mark: ([0.0; 3], 1.0),
             keys: Default::default(),
@@ -449,7 +450,8 @@ fn context_menu_colour_submenu_keeps_its_picker_open_and_a_swatch_closes_the_men
     let mut h = egui_kittest::Harness::new_ui_state(
         |ui, (view, actions): &mut (DocView, Vec<CanvasAction>)| {
             ui.button("Page").context_menu(|ui| {
-                let rights = MenuRights { allowed: true, can_paste: false, can_modify: true };
+                let rights =
+                    MenuRights { profile: &crate::profile::UiProfile::default(), allowed: true, can_paste: false, can_copy: true, can_modify: true };
                 if let Some(a) = context_menu(ui, view, &info, &|_, _| true, &prefs, rights) {
                     actions.push(a);
                 }
@@ -584,6 +586,7 @@ fn markup_comment_markers_skip_rounded_inverted_clamp_bounds() {
             tool: QuickTool::Select,
             prefs: &prefs,
             allowed: true,
+            profile: &crate::profile::UiProfile::default(),
             hidden: false,
             redact_mark: ([0.0; 3], 1.0),
             keys: crate::page_keys::PageKeys::new(false),
@@ -613,6 +616,7 @@ fn markup_comment_markers_stay_inside_turned_and_zoomed_pages() {
                 tool: QuickTool::Select,
                 prefs: &prefs,
                 allowed: true,
+                profile: &crate::profile::UiProfile::default(),
                 hidden: false,
                 redact_mark: ([0.0; 3], 1.0),
                 keys: crate::page_keys::PageKeys::new(false),
@@ -881,6 +885,7 @@ fn comment_marker_wins_over_an_overlapping_body_for_pick_and_hover() {
         tool: QuickTool::Select,
         prefs: &prefs,
         allowed: true,
+        profile: &crate::profile::UiProfile::default(),
         hidden: false,
         redact_mark: ([0.0; 3], 1.0),
         keys: crate::page_keys::PageKeys::new(false),
