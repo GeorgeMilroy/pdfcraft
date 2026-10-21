@@ -70,8 +70,12 @@ pub enum PanelAction {
 /// The Signatures panel body.
 pub(crate) fn panel(ui: &mut egui::Ui, t: &Tokens, sigs: &[SignatureInfo], expanded: &mut Vec<String>) -> Option<PanelAction> {
     let mut action = None;
+    // Signing, trusting and exporting are digital signatures; viewing a version opens a tab.
+    let profile = crate::dialogs::frame_profile(ui.ctx());
+    let manage = profile.allows_feature(crate::features::Feature::DigitalSignatures);
+    let open_files = profile.allows_feature(crate::features::Feature::App);
     ui.horizontal(|ui| {
-        if widgets::pill_button(ui, tl!("Validate all"), false).clicked() {
+        if profile.allows_id("sign.validate") && widgets::pill_button(ui, tl!("Validate all"), false).clicked() {
             action = Some(PanelAction::Validate);
         }
     });
@@ -120,7 +124,7 @@ pub(crate) fn panel(ui: &mut egui::Ui, t: &Tokens, sigs: &[SignatureInfo], expan
         egui::Frame::NONE.inner_margin(egui::Margin { left: 44, right: 4, top: 2, bottom: 8 }).show(ui, |ui| {
             ui.spacing_mut().item_spacing.y = 3.0;
             if !s.signed {
-                if widgets::pill_button(ui, tl!("Sign this field…"), true).clicked() {
+                if manage && widgets::pill_button(ui, tl!("Sign this field…"), true).clicked() {
                     action = Some(PanelAction::Sign(s.field.clone()));
                 }
                 return;
@@ -188,11 +192,12 @@ pub(crate) fn panel(ui: &mut egui::Ui, t: &Tokens, sigs: &[SignatureInfo], expan
                 // the Certificate Viewer's Trust tab, which names that certificate.
                 if let Some(c) = s.certificate.as_ref()
                     && s.status == SignatureStatus::Unknown
+                    && manage
                     && ui.button(tl!("Add to trusted certificates")).clicked()
                 {
                     action = Some(PanelAction::Trust(Box::new(c.clone())));
                 }
-                if ui.button(tl!("View signed version")).clicked() {
+                if open_files && ui.button(tl!("View signed version")).clicked() {
                     action = Some(PanelAction::ViewSigned { len: s.signed_len, revision: s.revision });
                 }
                 if let Some(c) = &s.certificate
@@ -203,6 +208,7 @@ pub(crate) fn panel(ui: &mut egui::Ui, t: &Tokens, sigs: &[SignatureInfo], expan
                     action = Some(PanelAction::ViewCertificate(chain));
                 }
                 if let Some(c) = &s.certificate
+                    && manage
                     && ui.button(tl!("Export certificate…")).clicked()
                 {
                     action = Some(PanelAction::ExportCertificate(Box::new(c.clone())));
@@ -255,7 +261,9 @@ pub(crate) enum CertAction {
 }
 
 /// The Certificate Viewer dialog: the chain on the left, the selected certificate's tabs.
-pub(crate) fn cert_viewer(ui: &mut egui::Ui, v: &mut CertViewer, trusted: &[Certificate], t: &Tokens) -> (bool, Option<CertAction>) {
+/// The Certificate Viewer. Without `manage` (digital signatures) it only shows: no Add to
+/// Trusted Certificates, no Export.
+pub(crate) fn cert_viewer(ui: &mut egui::Ui, v: &mut CertViewer, trusted: &[Certificate], t: &Tokens, manage: bool) -> (bool, Option<CertAction>) {
     title(ui, "Certificate Viewer");
     ui.label(egui::RichText::new(tl!("This dialog shows the details of a certificate and its chain.")).color(t.text_muted));
     ui.add_space(8.0);
@@ -335,13 +343,13 @@ pub(crate) fn cert_viewer(ui: &mut egui::Ui, v: &mut CertViewer, trusted: &[Cert
                         tl!("This certificate is not trusted. Signatures made with it show an unknown identity.")
                     });
                     ui.add_space(8.0);
-                    if !is_trusted && widgets::pill_button(ui, tl!("Add to Trusted Certificates"), false).clicked() {
+                    if !is_trusted && manage && widgets::pill_button(ui, tl!("Add to Trusted Certificates"), false).clicked() {
                         action = Some(CertAction::Trust(Box::new(c.clone())));
                     }
                 }
             }
             ui.add_space(8.0);
-            if widgets::pill_button(ui, tl!("Export…"), false).clicked() {
+            if manage && widgets::pill_button(ui, tl!("Export…"), false).clicked() {
                 action = Some(CertAction::Export(Box::new(c.clone())));
             }
         });

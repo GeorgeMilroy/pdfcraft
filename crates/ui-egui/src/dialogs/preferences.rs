@@ -5,6 +5,7 @@ use egui::{Color32, CornerRadius, Margin, Rect, RichText, Sense, Stroke, pos2, v
 
 use crate::PdfCraftApp;
 use crate::canvas::{Fit, PageLayout};
+use crate::features::Feature;
 use crate::motion::AnimationEffects;
 use crate::scroll_speed::ScrollSpeed;
 use crate::side_panels::ToolsSide;
@@ -523,26 +524,34 @@ pub(crate) fn preferences_body(ui: &mut egui::Ui, app: &mut PdfCraftApp, t: &Tok
     });
     ui.add_space(12.0);
 
-    // Card 4: Comment
-    let title4 = tl!("Comment");
-    preference_card(ui, t, title4, Some("message-square-text"), &mut ctx, |ui, ctx| {
-        card_identity(ui, app, t, ctx);
-    });
-    ui.add_space(12.0);
+    // The cards below are for features the profile may turn off; each shows with its feature.
+    let comments = [Feature::Comments, Feature::Markup, Feature::Shapes, Feature::Ink, Feature::Stamps, Feature::Measurement];
+    if comments.into_iter().any(|f| app.profile.allows_feature(f)) {
+        // Card 4: Comment
+        let title4 = tl!("Comment");
+        preference_card(ui, t, title4, Some("message-square-text"), &mut ctx, |ui, ctx| {
+            card_identity(ui, app, t, ctx);
+        });
+        ui.add_space(12.0);
+    }
 
-    // Card 5: Fill & Sign
-    let title5 = tl!("Fill & Sign");
-    preference_card(ui, t, title5, Some("pen-tool"), &mut ctx, |ui, ctx| {
-        card_fill_and_sign(ui, app, t, ctx);
-    });
-    ui.add_space(12.0);
+    if app.profile.allows_feature(Feature::FillSign) {
+        // Card 5: Fill & Sign
+        let title5 = tl!("Fill & Sign");
+        preference_card(ui, t, title5, Some("pen-tool"), &mut ctx, |ui, ctx| {
+            card_fill_and_sign(ui, app, t, ctx);
+        });
+        ui.add_space(12.0);
+    }
 
-    // Card 6: JavaScript
-    let title6 = "JavaScript";
-    preference_card(ui, t, title6, Some("code-xml"), &mut ctx, |ui, ctx| {
-        card_javascript(ui, app, t, ctx);
-    });
-    ui.add_space(12.0);
+    if app.profile.allows_feature(Feature::JavaScript) {
+        // Card 6: JavaScript
+        let title6 = "JavaScript";
+        preference_card(ui, t, title6, Some("code-xml"), &mut ctx, |ui, ctx| {
+            card_javascript(ui, app, t, ctx);
+        });
+        ui.add_space(12.0);
+    }
 
     if ctx.first_match_scrolled {
         ui.data_mut(|d| d.insert_temp(last_scrolled_id, query.clone()));
@@ -694,18 +703,21 @@ fn card_appearance(ui: &mut egui::Ui, app: &mut PdfCraftApp, t: &Tokens, ctx: &m
 fn card_documents_and_view(ui: &mut egui::Ui, app: &mut PdfCraftApp, t: &Tokens, ctx: &mut PrefSearchContext) {
     ui.horizontal(|ui| {
         ctx.label_primary(ui, tl!("Default workspace mode"), t);
-        ctx.pill_choice(
-            ui,
-            t,
-            &mut app.default_mode,
-            &[
-                (crate::Mode::AllTools, tl!("All tools")),
-                (crate::Mode::Read, tl!("Read")),
-                (crate::Mode::Edit, tl!("Edit")),
-                (crate::Mode::Convert, tl!("Convert")),
-                (crate::Mode::Sign, tl!("E-Sign")),
-            ],
-        );
+        // Edit, Convert and E-Sign open their tool group: offered while the profile shows it.
+        let shows = |group: &str, feature| !app.profile.hides_group(group) && app.profile.allows_feature(feature);
+        let offered = [true, true, shows("edit", Feature::EditContent), shows("export", Feature::Export), shows("fill_sign", Feature::FillSign)];
+        let modes: Vec<(crate::Mode, &str)> = [
+            (crate::Mode::AllTools, tl!("All tools")),
+            (crate::Mode::Read, tl!("Read")),
+            (crate::Mode::Edit, tl!("Edit")),
+            (crate::Mode::Convert, tl!("Convert")),
+            (crate::Mode::Sign, tl!("E-Sign")),
+        ]
+        .into_iter()
+        .zip(offered)
+        .filter_map(|(choice, offered)| offered.then_some(choice))
+        .collect();
+        ctx.pill_choice(ui, t, &mut app.default_mode, &modes);
     });
     ctx.label_secondary(ui, tl!("Used when opening PDFs. An explicit launch or control mode takes precedence for the session."), t);
     ui.add_space(6.0);
@@ -788,7 +800,9 @@ fn card_identity(ui: &mut egui::Ui, app: &mut PdfCraftApp, t: &Tokens, ctx: &mut
         let label = ctx.label_primary(ui, tl!("Name on new comments"), t);
         ui.add(crate::widgets::line(&mut app.comment_prefs.author).desired_width(240.0).char_limit(crate::MAX_AUTHOR_CHARS)).labelled_by(label.id);
     });
-    ctx.checkbox(ui, &mut app.comment_prefs.hide_empty_highlight_hover, tl!("Hide hover previews for highlights without comment text"), t);
+    if app.profile.allows_feature(Feature::Markup) {
+        ctx.checkbox(ui, &mut app.comment_prefs.hide_empty_highlight_hover, tl!("Hide hover previews for highlights without comment text"), t);
+    }
 }
 
 /// Content for Card 5: Fill & Sign
