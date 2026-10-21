@@ -1361,10 +1361,7 @@ impl Offers {
             },
             find: profile.allows_id("edit.find"),
             page_menu: PageMenuOffers::of(profile),
-            fields: crate::forms_ui::FieldOffers {
-                fill: profile.allows_feature(Feature::FormFill),
-                sign: profile.allows_feature(Feature::DigitalSignatures),
-            },
+            fields: crate::forms_ui::FieldOffers { fill: profile.allows_feature(Feature::FormFill), sign: profile.allows_id("sign.digital") },
         }
     }
 }

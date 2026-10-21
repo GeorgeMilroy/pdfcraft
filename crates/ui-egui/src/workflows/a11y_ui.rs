@@ -501,6 +501,7 @@ impl PdfCraftApp {
                 let Some((_, id)) = self.active_ids() else { return };
                 match rule {
                     // The language is chosen in Document Properties ▸ Advanced.
+                    Rule::PrimaryLanguage if !self.profile.allows_id("file.properties") => self.notify(tl!("Not allowed")),
                     Rule::PrimaryLanguage => self.dialog = Some(Dialog::Properties(PropsTab::Advanced)),
                     _ => {
                         let edit = self.session.get(id).map(|d| d.accessibility_fix(rule, None));
