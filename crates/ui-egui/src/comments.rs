@@ -1973,15 +1973,21 @@ pub(crate) fn attachment_offers(profile: &UiProfile) -> (bool, bool) {
     (profile.allows_feature(Feature::Download), open)
 }
 
+/// What `a`'s attached file offers in `profile` ([`attachment_offers`]; opening only a PDF):
+/// nothing when `a` attaches no file.
+pub(crate) fn annotation_attachment_offers(info: &DocInfo, a: &Annotation, profile: &UiProfile) -> (bool, bool) {
+    let source = pdfcraft_render::AttachmentSource::Annotation { page: a.page, index: a.index };
+    let Some(file) = info.attachments.iter().find(|f| f.source == source) else { return (false, false) };
+    let (save, open) = attachment_offers(profile);
+    (save, open && file.name.to_lowercase().ends_with(".pdf"))
+}
+
 /// Save attachment… and, for a PDF, Open in a new tab, first in a file attachment comment's
 /// menus as in the Attachments panel: the comment is where the reader finds its file. Reading
 /// the file changes nothing, so a read-only document offers them too; the profile can refuse
 /// them ([`attachment_offers`]).
 pub(crate) fn attachment_items(ui: &mut egui::Ui, view: &mut DocView, info: &DocInfo, a: &Annotation, profile: &UiProfile) {
-    let source = pdfcraft_render::AttachmentSource::Annotation { page: a.page, index: a.index };
-    let Some(file) = info.attachments.iter().find(|f| f.source == source) else { return };
-    let (save, open) = attachment_offers(profile);
-    let open = open && file.name.to_lowercase().ends_with(".pdf");
+    let (save, open) = annotation_attachment_offers(info, a, profile);
     if save && ui.button(tl!("Save attachment…")).clicked() {
         view.comments.attachment_request = Some((a.page, a.index, false));
         ui.close();

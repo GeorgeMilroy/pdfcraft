@@ -190,6 +190,7 @@ impl PdfCraftApp {
     pub(crate) fn save_custom_stamp(&mut self) {
         let d = std::mem::take(&mut self.stamp_draft);
         if !self.manages_custom_stamps() {
+            self.notify(tl!("Not allowed"));
             return;
         }
         self.custom_stamps.push(CustomStamp { category: d.category.trim().into(), name: d.name.trim().into(), file: d.file, page: 0, data: d.data });

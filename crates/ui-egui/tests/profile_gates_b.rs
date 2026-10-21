@@ -309,3 +309,144 @@ fn a_script_opens_no_web_page_when_the_profile_turns_links_off() {
     assert!(h.state().pending_link.is_none());
     assert_eq!(h.state().toast.clone().map(|t| t.0).as_deref(), Some("Not allowed"));
 }
+
+fn hiding(ids: &[&str]) -> UiProfile {
+    UiProfile { hidden: ids.iter().map(|s| s.to_string()).collect(), ..UiProfile::default() }
+}
+
+fn toast(h: &Harness<'_, PdfCraftApp>) -> Option<String> {
+    h.state().toast.clone().map(|t| t.0)
+}
+
+#[test]
+fn approval_signing_and_certifying_are_each_their_own_command() {
+    let rect = Some([10.0, 10.0, 100.0, 50.0]);
+    // (hidden, certify refused, approval refused)
+    for (hidden, certify_refused, sign_refused) in [("sign.digital", false, true), ("sign.certify", true, false)] {
+        for (certify, refused) in [(Some(2), certify_refused), (None, sign_refused)] {
+            let mut h = harness(hiding(&[hidden]));
+            h.state_mut().start_signing(0, rect, None, certify);
+            assert_eq!(h.state().dialog.is_none(), refused, "{hidden} hidden, certify {certify:?}");
+            assert_eq!(h.state().sign_draft.is_none(), refused);
+            assert_eq!(toast(&h).as_deref() == Some("Not allowed"), refused, "a refusal says so");
+        }
+    }
+    // An open Sign dialog closes when the command its draft is for goes, and only then.
+    for (certify, hidden, open) in
+        [(None, "sign.digital", false), (Some(2), "sign.digital", true), (Some(2), "sign.certify", false), (None, "sign.certify", true)]
+    {
+        let mut h = harness(UiProfile::default());
+        h.state_mut().start_signing(0, rect, None, certify);
+        h.state_mut().set_profile(hiding(&[hidden]));
+        assert_eq!(h.state().dialog == Some(Dialog::Sign), open, "certify {certify:?} with {hidden} hidden");
+    }
+}
+
+/// One page with an empty signature field.
+const WITH_FIELD: &[u8] = b"%PDF-1.7
+1 0 obj << /Type /Catalog /Pages 2 0 R /AcroForm << /Fields [6 0 R] >> >> endobj
+2 0 obj << /Type /Pages /Kids [3 0 R] /Count 1 >> endobj
+3 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 300 200] /Annots [6 0 R] >> endobj
+6 0 obj << /Type /Annot /Subtype /Widget /FT /Sig /T (Approver) /Rect [20 20 280 80] /P 3 0 R /F 4 >> endobj
+trailer << /Root 1 0 R >>
+%%EOF";
+
+#[test]
+fn sign_this_field_needs_approval_signing() {
+    let offered = |profile: UiProfile| {
+        let mut h = Harness::builder().with_size(egui::vec2(1400.0, 900.0)).build_eframe(move |_cc| {
+            let mut app = PdfCraftApp::new();
+            app.set_option("language", "en").unwrap();
+            app.open_bytes("form.pdf", None, WITH_FIELD.to_vec()).unwrap();
+            app.set_profile(profile);
+            app.set_option("panel", "signatures").unwrap();
+            app.sig_expanded = vec!["Approver".into()];
+            app
+        });
+        h.run_steps(6);
+        assert!(shows(&h, "Unsigned signature field: Approver"), "the panel lists the field");
+        shows(&h, "Sign this field…")
+    };
+    assert!(offered(UiProfile::default()));
+    assert!(offered(hiding(&["sign.certify"])), "certifying is another command");
+    assert!(!offered(hiding(&["sign.digital"])));
+}
+
+#[test]
+fn properties_tabs_follow_their_own_commands() {
+    let tabs = |profile: UiProfile, tab: PropsTab| {
+        let mut h = harness(profile);
+        open(&mut h, Dialog::Properties(tab));
+        ["Description", "Initial View", "Security", "Fonts", "Advanced"].map(|l| h.query_all_by_label(l).count())
+    };
+    let all = tabs(UiProfile::default(), PropsTab::Description);
+    assert!(all.iter().all(|n| *n > 0), "every tab by default: {all:?}");
+    let no_security = tabs(hiding(&["protect.properties"]), PropsTab::Description);
+    assert_eq!(no_security[2], all[2] - 1, "no Security tab");
+    assert_eq!([no_security[0], no_security[1], no_security[3], no_security[4]], [all[0], all[1], all[3], all[4]]);
+    let all = tabs(UiProfile::default(), PropsTab::Security);
+    let only_security = tabs(hiding(&["file.properties"]), PropsTab::Security);
+    assert_eq!(only_security, [all[0] - 1, all[1] - 1, all[2], all[3] - 1, all[4] - 1], "only the Security tab");
+
+    // A request for a refused tab is refused, and changes nothing.
+    let mut h = harness(hiding(&["protect.properties"]));
+    assert!(h.state_mut().set_option("dialog", "security").is_err());
+    assert_eq!(h.state().dialog, None);
+    h.state_mut().set_option("dialog", "fonts").unwrap();
+    assert_eq!(h.state().dialog, Some(Dialog::Properties(PropsTab::Fonts)));
+    let mut h = harness(hiding(&["file.properties"]));
+    for refused in ["properties", "fonts", "advanced"] {
+        assert!(h.state_mut().set_option("dialog", refused).is_err(), "{refused}");
+    }
+    h.state_mut().set_option("dialog", "security").unwrap();
+    assert_eq!(h.state().dialog, Some(Dialog::Properties(PropsTab::Security)));
+
+    // A tab the profile comes to refuse gives way to one it allows.
+    let mut h = harness(UiProfile::default());
+    open(&mut h, Dialog::Properties(PropsTab::Security));
+    h.state_mut().set_profile(hiding(&["protect.properties"]));
+    assert_eq!(h.state().dialog, Some(Dialog::Properties(PropsTab::Description)));
+    h.state_mut().dialog = Some(Dialog::Properties(PropsTab::Fonts));
+    h.state_mut().set_profile(hiding(&["file.properties"]));
+    assert_eq!(h.state().dialog, Some(Dialog::Properties(PropsTab::Security)));
+    h.state_mut().set_profile(hiding(&["file.properties", "protect.properties"]));
+    assert_eq!(h.state().dialog, None);
+}
+
+/// A host like free-pdf-sdk's: it runs the app's `logic`, then sets the profile, then draws.
+struct Host {
+    app: PdfCraftApp,
+    next: Option<UiProfile>,
+}
+
+impl eframe::App for Host {
+    fn logic(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        self.app.logic(ctx, frame);
+        if let Some(profile) = self.next.take() {
+            self.app.set_profile(profile);
+        }
+    }
+
+    fn ui(&mut self, ui: &mut egui::Ui, frame: &mut eframe::Frame) {
+        self.app.ui(ui, frame);
+    }
+}
+
+#[test]
+fn a_profile_set_after_logic_is_drawn_in_the_same_frame() {
+    let mut h = Harness::builder().with_size(egui::vec2(1400.0, 900.0)).build_eframe(|_cc| {
+        let mut app = PdfCraftApp::new();
+        app.set_option("language", "en").unwrap();
+        app.open_bytes("doc.pdf", None, fixture(2)).unwrap();
+        app.set_option("panel", "accessibility").unwrap();
+        Host { app, next: None }
+    });
+    h.run_steps(4);
+    assert!(h.query_all_by_label("Check for accessibility").next().is_some());
+    h.state_mut().next = Some(hiding(&["a11y.check"]));
+    h.run_steps(1);
+    assert!(h.query_all_by_label("Check for accessibility").next().is_none(), "not drawn with last frame's profile");
+    h.state_mut().next = Some(UiProfile::default());
+    h.run_steps(1);
+    assert!(h.query_all_by_label("Check for accessibility").next().is_some(), "and back");
+}

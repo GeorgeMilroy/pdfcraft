@@ -28,7 +28,8 @@ fn profile_id() -> egui::Id {
 
 /// Hand the profile to panel bodies drawn without the app (Signatures, Accessibility, Tags),
 /// through [`frame_profile`]; republished only when it changed. Called at the start of every
-/// frame, before anything is drawn, so no panel draws with last frame's profile.
+/// frame and of drawing, and by [`PdfCraftApp::set_profile`], so no panel draws with last
+/// frame's profile.
 pub(crate) fn publish_profile(app: &PdfCraftApp, ctx: &egui::Context) {
     if *frame_profile(ctx) != app.profile {
         ctx.data_mut(|d| d.insert_temp(profile_id(), std::sync::Arc::new(app.profile.clone())));
@@ -150,7 +151,8 @@ fn dialogs(app: &mut PdfCraftApp, ctx: &egui::Context) {
                         (PropsTab::Advanced, tl!("Advanced")),
                         (PropsTab::SpaceAudit, tl!("Space Audit")),
                     ] {
-                        if widgets::mode_tab(ui, label, tab == tb).clicked() {
+                        // A tab shows while its command is allowed (Security: protect.properties).
+                        if app.profile.allows_id(tb.command()) && widgets::mode_tab(ui, label, tab == tb).clicked() {
                             next = Dialog::Properties(tb);
                         }
                     }
