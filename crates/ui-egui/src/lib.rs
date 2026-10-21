@@ -193,6 +193,16 @@ impl Mode {
             _ => None,
         }
     }
+
+    /// The tool group the workspace opens on, if it has its own.
+    pub(crate) fn tool_group(self) -> Option<&'static str> {
+        match self {
+            Self::Edit => Some("edit"),
+            Self::Convert => Some("export"),
+            Self::Sign => Some("fill_sign"),
+            Self::AllTools | Self::Read => None,
+        }
+    }
 }
 
 /// What the left panel shows.
@@ -263,6 +273,41 @@ pub enum QuickTool {
     /// Edit ▸ Column Select: drag a rectangle to select only the text inside it (#740). The
     /// Select tool does the same while Alt/Option is held at the start of a drag.
     ColumnSelect,
+}
+
+impl QuickTool {
+    /// The command that arms the tool, which the profile must allow; `None` for Select and Hand.
+    pub(crate) fn command(self) -> Option<&'static str> {
+        Some(match self {
+            Self::Select | Self::Hand => return None,
+            Self::Comment(t) => t.command(),
+            Self::Measure(t) => match t {
+                measure_ui::Tool::Distance => "measure.distance",
+                measure_ui::Tool::Perimeter => "measure.perimeter",
+                measure_ui::Tool::Area => "measure.area",
+                measure_ui::Tool::Calibrate => "measure.scale",
+            },
+            Self::Crop => "page.crop",
+            Self::EnhanceCamera => "ocr.enhance_camera",
+            Self::Fill(t) => t.command(),
+            Self::Field(t) => t.command(),
+            Self::Redact => "redact.mark",
+            Self::AddText => "edit.text",
+            Self::EditText => "edit.edit_text",
+            Self::Stamp(_) | Self::CustomStamp(_) => "comment.stamp",
+            Self::Link => "edit.link",
+            Self::SignArea { certify } => {
+                if certify {
+                    "sign.certify"
+                } else {
+                    "sign.digital"
+                }
+            }
+            Self::MarqueeZoom => "view.marquee_zoom",
+            Self::Snapshot => "edit.snapshot",
+            Self::ColumnSelect => "edit.column_select",
+        })
+    }
 }
 
 /// A file dropped on a page grid: its name, and its bytes or, for a file on disk, the path they are
@@ -371,6 +416,62 @@ pub enum Dialog {
     AuditSpace,
     /// Signatures ▸ Show certificate.
     CertificateViewer,
+}
+
+impl Dialog {
+    /// The command whose dialog this is, which the profile must allow; `None` for dialogs that
+    /// finish what the app already started (recovery, overwriting a changed file).
+    pub(crate) fn command(self) -> Option<&'static str> {
+        use pdfcraft_engine::MarkKind;
+        Some(match self {
+            Self::WordCount => "file.word_count",
+            Self::CreateImages => "create.images",
+            Self::Properties(PropsTab::Security) => "protect.properties",
+            Self::Properties(_) => "file.properties",
+            Self::About => "help.about",
+            Self::Shortcuts => "help.shortcuts",
+            Self::Split => "page.split",
+            Self::NumberPages => "page.number",
+            Self::Protect => "protect.password",
+            Self::PageBoxes => "page.boxes",
+            Self::Marks(MarkKind::HeaderFooter) => "edit.header_footer",
+            Self::Marks(MarkKind::Watermark) => "edit.watermark",
+            Self::Marks(MarkKind::Background) => "edit.background",
+            Self::Export(export_ui::ExportKind::Image) => "export.image",
+            Self::Export(export_ui::ExportKind::Text) => "export.text",
+            Self::Export(export_ui::ExportKind::AllImages) => "export.all_images",
+            Self::Signature => "sign.fill.signature",
+            Self::ReplacePages => "page.replace",
+            Self::FieldProps | Self::BulkFieldProps | Self::DuplicateField => "form.field.properties",
+            Self::FieldTable => "form.add.text_table",
+            Self::RedactPages => "redact.pages",
+            Self::RedactSearch => "redact.search",
+            Self::RedactProps => "redact.properties",
+            Self::RedactApply => "redact.apply",
+            Self::Print => "print.dialog",
+            Self::Revert => "file.revert",
+            Self::LinkProps => "edit.link",
+            Self::Extract => "page.extract",
+            Self::RotatePages => "page.rotate_dialog",
+            Self::RemoveHidden => "protect.remove_hidden",
+            Self::Sanitize => "redact.sanitize",
+            Self::SummarizeComments => "comment.summarize",
+            Self::Sign => "sign.digital",
+            Self::Optimize | Self::AuditSpace => "optimize.advanced",
+            Self::AccessibilityOptions => "a11y.check",
+            Self::RecognizeText => "ocr.recognize",
+            Self::JsConsole => "tools.js_console",
+            Self::DocumentJs => "tools.document_js",
+            Self::Preferences => "app.preferences",
+            Self::CompareFiles => "doc.compare",
+            Self::ActionWizard => "actions.wizard",
+            Self::PdfA => "standards.pdfa",
+            Self::CreateStamp => "comment.stamp",
+            Self::AltText => "a11y.alt_text",
+            Self::CertificateViewer => "sign.panel",
+            Self::CommentProps | Self::Recovery | Self::OverwriteChanged => return None,
+        })
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1316,11 +1417,12 @@ impl PdfCraftApp {
     }
 
     /// Fields are being edited (Prepare a form or its Calculation order is open, or a field tool
-    /// is picked), unless the form is being previewed.
+    /// is picked), unless the form is being previewed, and the profile lets forms be designed.
     pub fn is_preparing(&self) -> bool {
         ((self.left_open && matches!(self.left, LeftPanel::Tool("form") | LeftPanel::CalculationOrder))
             || matches!(self.quick_tool, QuickTool::Field(_)))
             && !self.form_preview
+            && self.profile.allows_feature(features::Feature::FormDesign)
     }
 
     /// Open a document the way it asks to be opened: navigation panel, layout, magnification,
@@ -1688,7 +1790,12 @@ impl PdfCraftApp {
     /// The document whose page grid is showing and may take pages, if any.
     fn grid_target(&self) -> Option<pdfcraft_engine::DocId> {
         let view = self.active.and_then(|i| self.views.get(i)).filter(|v| v.organize)?;
-        (self.dialog.is_none() && self.session.get(view.id)?.allows_assembly()).then_some(view.id)
+        (self.dialog.is_none() && self.allows_page_drop() && self.session.get(view.id)?.allows_assembly()).then_some(view.id)
+    }
+
+    /// Whether the profile lets dropped files be inserted as pages.
+    fn allows_page_drop(&self) -> bool {
+        self.profile.allows_feature(features::Feature::Pages) && self.profile.allows_id("page.insert")
     }
 
     /// The document whose Pages panel is under the pointer and may take pages, if any.
@@ -1697,7 +1804,7 @@ impl PdfCraftApp {
         let view = self.active.and_then(|i| self.views.get(i))?;
         let pointer = ctx.input(|i| i.pointer.hover_pos())?;
         let over = view.pages_panel.is_some_and(|panel| panel.contains(pointer));
-        (over && self.dialog.is_none() && self.session.get(view.id)?.allows_assembly()).then_some(view.id)
+        (over && self.dialog.is_none() && self.allows_page_drop() && self.session.get(view.id)?.allows_assembly()).then_some(view.id)
     }
 
     /// Files dropped on the Pages panel, or while the page grid shows, are inserted into the
@@ -2483,8 +2590,6 @@ impl PdfCraftApp {
         self.pending_panel_reveals.push(docking::Panel::Tools);
     }
 
-    /// Enter a tool from the catalogue, Home, palette or control channel. Organize is a
-    /// workspace, so opening its panel also opens the page grid (without toggling it off).
     /// Uses `profile` from now on and puts down what it no longer allows: an armed tool, an open
     /// panel or dialog. Hosts set the profile this way rather than assigning the field.
     pub fn set_profile(&mut self, profile: profile::UiProfile) {
@@ -2492,28 +2597,89 @@ impl PdfCraftApp {
         self.enforce_profile();
     }
 
-    /// Puts down what the profile doesn't allow (after it changed).
+    /// Puts down what the profile doesn't allow (after it changed; checked every frame too): an
+    /// armed tool, an open panel, tool group or dialog, the find bar, the page grid, form
+    /// preparation and the Combine files tab.
     pub(crate) fn enforce_profile(&mut self) {
         if self.right.is_some_and(|p| !self.profile.shows_panel(p)) {
             self.choose_right_panel(None);
         }
+        if self.quick_tool.command().is_some_and(|id| !self.profile.allows_id(id)) {
+            if matches!(self.quick_tool, QuickTool::EditText | QuickTool::AddText) {
+                self.put_down_edit_text();
+            } else {
+                self.quick_tool = QuickTool::Select;
+            }
+        }
+        if let LeftPanel::Tool(id) = self.left
+            && !self.shows_tool_group(id)
+        {
+            self.left = LeftPanel::AllTools;
+        }
+        if self.form_preview && !self.profile.allows_feature(features::Feature::FormDesign) {
+            self.form_preview = false;
+        }
+        if self.dialog.is_some_and(|d| d.command().is_some_and(|id| !self.profile.allows_id(id))) {
+            self.dialog = None;
+        }
+        let (find, organize) = (self.profile.allows_id("edit.find"), self.shows_command("page.organize"));
+        for view in &mut self.views {
+            if !find {
+                view.find = None;
+            }
+            if !organize {
+                view.organize = false;
+            }
+        }
+        if self.palette_open && !self.shows_command("view.palette") {
+            self.palette_open = false;
+        }
+        if self.combine_tab.open && !self.profile.allows_id("page.combine") {
+            self.close_combine_tab();
+        }
     }
 
-    pub(crate) fn select_tool(&mut self, id: &'static str) {
-        if self.profile.hides_group(id) {
-            return;
+    /// Whether a command shows and runs in this profile: [`profile::UiProfile::allows_id`], and
+    /// what only the app knows. Read mode can't be left in a view-only profile, the palette
+    /// belongs to the search box, and the page grid is for changing pages.
+    pub(crate) fn shows_command(&self, id: &str) -> bool {
+        self.profile.allows_id(id)
+            && match id {
+                "view.read_mode" => !self.profile.read_only,
+                "view.palette" => self.profile.shows_part(profile::parts::SEARCH),
+                "page.organize" => self.profile.allows_feature(features::Feature::Pages),
+                _ => true,
+            }
+    }
+
+    /// Whether the tool group `id` shows: [`profile::UiProfile::shows_group`], and the feature the
+    /// group serves is on (a group can keep entries that only copy, such as Extract pages, after
+    /// its feature is gone).
+    pub(crate) fn shows_tool_group(&self, id: &str) -> bool {
+        pdfcraft_engine::catalog::group(id).is_some_and(|g| self.profile.shows_group(g))
+            && features::group_feature(id).is_none_or(|f| self.profile.allows_feature(f))
+    }
+
+    /// Enter a tool from the catalogue, Home, palette or control channel. Organize is a
+    /// workspace, so opening its panel also opens the page grid (without toggling it off).
+    /// False when the profile doesn't show the group.
+    pub(crate) fn select_tool(&mut self, id: &'static str) -> bool {
+        if !self.shows_tool_group(id) {
+            return false;
         }
         // The tool's panel shows, not the expanded All tools view over it.
         self.all_tools_full = false;
         self.left = LeftPanel::Tool(id);
         self.reveal_tools();
+        let organize = id == "organize" && self.shows_command("page.organize");
         if let Some(view) = self.active.and_then(|i| self.views.get_mut(i)) {
-            if id == "organize" {
+            if organize {
                 view.open_organize();
             } else {
                 view.organize = false;
             }
         }
+        true
     }
 
     /// Select the workspace and its matching tool panel, just like the mode bar. The tool goes
@@ -2524,10 +2690,8 @@ impl PdfCraftApp {
         if let Some(view) = self.active.and_then(|i| self.views.get_mut(i)) {
             view.organize = false;
         }
-        self.left = match mode {
-            Mode::Edit => LeftPanel::Tool("edit"),
-            Mode::Convert => LeftPanel::Tool("export"),
-            Mode::Sign => LeftPanel::Tool("fill_sign"),
+        self.left = match mode.tool_group() {
+            Some(id) if self.shows_tool_group(id) => LeftPanel::Tool(id),
             _ => LeftPanel::AllTools,
         };
     }
@@ -2543,7 +2707,7 @@ impl PdfCraftApp {
         if mode != Mode::AllTools {
             self.all_tools_full = false;
         }
-        if mode == Mode::Edit {
+        if mode == Mode::Edit && self.profile.allows_id("edit.edit_text") {
             self.quick_tool = QuickTool::EditText;
         } else if matches!(self.quick_tool, QuickTool::EditText | QuickTool::AddText) {
             self.put_down_edit_text();
@@ -2616,6 +2780,9 @@ impl PdfCraftApp {
     /// keeps comment tools from reopening it; opening it again lets them (#225). A choice made in
     /// Read mode replaces the pane saved on the way in, so leaving Read mode doesn't undo it.
     pub fn choose_right_panel(&mut self, panel: Option<RightPanel>) {
+        if panel.is_some_and(|p| !self.profile.shows_panel(p)) {
+            return;
+        }
         if self.mode == Mode::Read {
             self.right_before_read = None;
         }
@@ -2909,6 +3076,7 @@ impl PdfCraftApp {
     ///
     /// This is the seed of the UI control channel (M3.9): the same verbs become `ui.set` calls.
     pub fn set_option(&mut self, key: &str, value: &str) -> Result<(), String> {
+        let organize = self.shows_command("page.organize");
         let view = self.active.and_then(|i| self.views.get_mut(i));
         match (key, view) {
             ("language", _) => {
@@ -2934,7 +3102,7 @@ impl PdfCraftApp {
                 self.animation_effects = motion::AnimationEffects::parse(value).ok_or("animation_effects must be system, on, or off")?;
             }
             ("panel", _) => {
-                self.right = match value {
+                let panel = match value {
                     "comments" => Some(RightPanel::Comments),
                     "bookmarks" => Some(RightPanel::Bookmarks),
                     "pages" => Some(RightPanel::Pages),
@@ -2948,7 +3116,11 @@ impl PdfCraftApp {
                     "compare" => Some(RightPanel::Compare),
                     "none" => None,
                     other => return Err(format!("unknown panel {other}")),
+                };
+                if panel.is_some_and(|p| !self.profile.shows_panel(p)) {
+                    return Err(format!("the profile doesn't allow the {value} panel"));
                 }
+                self.right = panel;
             }
             ("mode", _) => {
                 let mode = Mode::parse(value).unwrap_or(Mode::AllTools);
@@ -2966,7 +3138,9 @@ impl PdfCraftApp {
             ("date-language", _) => self.session.set_date_language(Some(value).filter(|v| *v != "auto"))?,
             ("tool", _) => {
                 let g = pdfcraft_engine::catalog::group(value).ok_or_else(|| format!("unknown tool {value}"))?;
-                self.select_tool(g.id);
+                if !self.select_tool(g.id) {
+                    return Err(format!("the profile doesn't allow the {value} tool"));
+                }
             }
             ("left", _) => self.left_open = value != "closed",
             ("home", _) => {
@@ -2976,6 +3150,14 @@ impl PdfCraftApp {
                 self.all_tools_full = false;
             }
             ("dialog", _) => {
+                let wanted = match value {
+                    "sign" | "certify" => Some(Dialog::Sign),
+                    "number-pages" => Some(Dialog::NumberPages),
+                    _ => None,
+                };
+                if wanted.and_then(Dialog::command).is_some_and(|id| !self.profile.allows_id(id)) {
+                    return Err(format!("the profile doesn't allow the {value} dialog"));
+                }
                 self.dialog = match value {
                     "properties" => Some(Dialog::Properties(PropsTab::Description)),
                     "security" => Some(Dialog::Properties(PropsTab::Security)),
@@ -3017,6 +3199,10 @@ impl PdfCraftApp {
                     }
                     "none" => None,
                     _ => Some(Dialog::About),
+                };
+                if self.dialog.and_then(Dialog::command).is_some_and(|id| !self.profile.allows_id(id)) {
+                    self.dialog = None;
+                    return Err(format!("the profile doesn't allow the {value} dialog"));
                 }
             }
             ("tools", _) if value == "full" => self.expand_all_tools(),
@@ -3025,6 +3211,9 @@ impl PdfCraftApp {
                 self.all_tools_expanded = value != "collapsed";
             }
             ("palette", _) => {
+                if !self.shows_command("view.palette") {
+                    return Err("the profile doesn't allow the palette".into());
+                }
                 self.palette_open = true;
                 self.palette_query = value.to_string();
             }
@@ -3096,6 +3285,8 @@ impl PdfCraftApp {
             ("organize", Some(v)) => {
                 if value == "off" {
                     v.organize = false;
+                } else if !organize {
+                    return Err("the profile doesn't allow the page grid".into());
                 } else {
                     v.open_organize();
                 }
@@ -3154,7 +3345,7 @@ impl PdfCraftApp {
             ("notice", Some(v)) => v.notice_dismissed = value == "off",
             ("quick", _) => {
                 // `--quick select|hand|note|freetext|highlight|underline|strikeout|ink|line|arrow|square|circle`
-                self.quick_tool = match value {
+                let tool = match value {
                     "select" => QuickTool::Select,
                     measure if measure.starts_with("measure-") => QuickTool::Measure(
                         measure_ui::Tool::from_name(measure.trim_start_matches("measure-")).ok_or_else(|| format!("unknown tool {measure}"))?,
@@ -3192,10 +3383,17 @@ impl PdfCraftApp {
                     ),
                     other => {
                         let t = comments::CommentTool::from_command(&format!("comment.{other}")).ok_or_else(|| format!("unknown tool {other}"))?;
+                        if !self.profile.allows_id(t.command()) {
+                            return Err(format!("the profile doesn't allow the {value} tool"));
+                        }
                         self.comment_prefs.group_tool[t.group()] = t;
                         QuickTool::Comment(t)
                     }
                 };
+                if tool.command().is_some_and(|id| !self.profile.allows_id(id)) {
+                    return Err(format!("the profile doesn't allow the {value} tool"));
+                }
+                self.quick_tool = tool;
             }
             ("author", _) => self.comment_prefs.author = value.to_string(),
             ("comment-tool-pinned", _) => {
@@ -3390,7 +3588,7 @@ impl PdfCraftApp {
     fn copy_key(&mut self, i: usize, ctx: &egui::Context) {
         // ⌘C arrives as a Copy event on most platforms.
         let copy = ctx.input(|input| input.events.iter().any(|e| matches!(e, egui::Event::Copy)));
-        if !copy || ctx.egui_wants_keyboard_input() {
+        if !copy || ctx.egui_wants_keyboard_input() || !self.profile.allows_id("edit.copy") {
             return;
         }
         self.copy_selected_text(i, ctx);
@@ -3526,6 +3724,9 @@ impl eframe::App for PdfCraftApp {
                 self.quick_tool = QuickTool::Select;
             }
         }
+        // Whatever set it (the control channel, a host assigning the profile), nothing the
+        // profile refuses stays open or armed.
+        self.enforce_profile();
         #[cfg(not(target_arch = "wasm32"))]
         {
             if let Some(worker) = &self.open_worker {
@@ -3573,7 +3774,7 @@ impl eframe::App for PdfCraftApp {
         #[cfg(not(target_arch = "wasm32"))]
         let dropped = self.drop_on_grid(dropped, ctx);
         for f in dropped {
-            if self.profile.hides("file.open") {
+            if !self.profile.allows_id("file.open") {
                 continue;
             }
             // Files dropped on the Combine files tab join its list instead of opening.

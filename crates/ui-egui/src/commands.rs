@@ -116,7 +116,7 @@ impl PdfCraftApp {
 
     fn execute_unguarded(&mut self, id: &str) -> bool {
         let Some(spec) = commands::command(id) else { return false };
-        if !self.profile.allows_command(spec) {
+        if !self.shows_command(spec.id) {
             return false;
         }
         // A brand without community links has no Discord, web page or GitHub to open.
@@ -739,6 +739,10 @@ impl PdfCraftApp {
         specs.sort_by_key(|c| std::cmp::Reverse(c.shortcut.map(|s| s.modifier_count()).unwrap_or(0)));
         for spec in specs {
             let Some(s) = spec.shortcut else { continue };
+            // A command the profile refuses leaves its key to whatever else wants it (the host).
+            if !self.shows_command(spec.id) {
+                continue;
+            }
             // Keep the canvas's silent no-op when there is no previous/next view to visit.
             if matches!(spec.id, "view.previous_view" | "view.next_view") && !self.command_enabled(spec) {
                 continue;
@@ -795,13 +799,20 @@ fn tab_after(current: Option<usize>, count: usize, forward: bool) -> Option<usiz
     })
 }
 
+/// Whether a top-level menu has a registered command to show.
+pub(crate) fn registry_menu_shows(app: &PdfCraftApp, menu: &str) -> bool {
+    commands::menu(menu).any(|spec| menu_shows(app, spec))
+}
+
+/// Whether a registered command shows in its menu.
+fn menu_shows(app: &PdfCraftApp, spec: &CommandSpec) -> bool {
+    (crate::brand::current().community_links || pdfcraft_engine::links::for_command(spec.id).is_none()) && app.shows_command(spec.id)
+}
+
 /// Render a top-level menu's registered commands (with live labels, shortcuts and enablement).
 pub(crate) fn registry_menu(app: &mut PdfCraftApp, ui: &mut egui::Ui, menu: &str) {
     for spec in commands::menu(menu) {
-        if !crate::brand::current().community_links && pdfcraft_engine::links::for_command(spec.id).is_some() {
-            continue;
-        }
-        if !app.profile.allows_command(spec) {
+        if !menu_shows(app, spec) {
             continue;
         }
         let label = commands::current_label(spec, &app.session, app.active_ids().map(|(_, id)| id));
@@ -824,10 +835,12 @@ pub(crate) fn registry_menu(app: &mut PdfCraftApp, ui: &mut egui::Ui, menu: &str
                             ui.close();
                         }
                     }
-                    ui.separator();
-                    if ui.button(tl!("Clear Recent Files")).clicked() {
-                        clear = true;
-                        ui.close();
+                    if app.profile.allows_id("file.clear_recent") {
+                        ui.separator();
+                        if ui.button(tl!("Clear Recent Files")).clicked() {
+                            clear = true;
+                            ui.close();
+                        }
                     }
                 })
             });
