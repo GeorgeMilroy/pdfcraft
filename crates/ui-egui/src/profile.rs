@@ -9,7 +9,10 @@
 use std::collections::BTreeSet;
 
 use pdfcraft_engine::Edit;
+use pdfcraft_engine::catalog::{Availability, ToolGroup, ToolItem};
 use pdfcraft_engine::commands::{CommandSpec, Needs};
+
+use crate::features::{self, Feature, FeatureSet};
 
 /// Interface parts that can be hidden, besides commands and tool groups.
 pub mod parts {
@@ -23,6 +26,20 @@ pub mod parts {
     pub const SEARCH: &str = "ui:search";
     /// The Home screen shown when no document is open.
     pub const HOME: &str = "ui:home";
+    /// The right-hand rail (panel buttons, page navigation, zoom).
+    pub const RAIL: &str = "ui:rail";
+    /// The rail's zoom and page display controls.
+    pub const RAIL_ZOOM: &str = "ui:rail_zoom";
+    /// The rail's page navigation (previous/next page, page number).
+    pub const RAIL_PAGE_NAV: &str = "ui:rail_page_nav";
+    /// The floating tool bar beside the page (Select, Hand, comment and Fill & Sign tools).
+    pub const QUICK_BAR: &str = "ui:quick_bar";
+    /// The Tools panel on the left.
+    pub const TOOLS_PANEL: &str = "ui:tools_panel";
+    /// A right-hand panel, as `panel:<name>`: `comments`, `bookmarks`, `pages`, `fields`,
+    /// `layers`, `attachments`, `signatures`, `accessibility`, `tags`, `search`, `compare`
+    /// ([`super::UiProfile::shows_panel`]).
+    pub const PANEL_PREFIX: &str = "panel:";
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -40,9 +57,74 @@ pub struct UiProfile {
     /// back: one button reopens it as it was, then one per tool group shown opens that group.
     /// For hosts that hide the mode tabs, which otherwise bring it back. Not with `read_only`.
     pub tools_rail: bool,
+    /// The features the interface offers ([`crate::features`]); `None` is every feature, the app
+    /// as it ships. A feature that is off is hidden everywhere: its commands, tool groups and
+    /// catalogue entries, panels and buttons, and its edits are refused.
+    pub features: Option<FeatureSet>,
+    /// Leave out catalogue entries that are not available yet (planned for a later milestone or
+    /// needing a provider), instead of listing them with their milestone.
+    pub hide_planned: bool,
+    /// Panels can't be moved, floated, closed from their tab or rearranged.
+    pub lock_layout: bool,
+    /// Whether links to web pages (URI actions) may open, after the usual prompt; `None` keeps
+    /// the app's behaviour (they may).
+    pub external_links: Option<bool>,
 }
 
 impl UiProfile {
+    /// Whether `feature` is on: in [`Self::features`], and not an editing feature in a
+    /// read-only profile (nor a non-comment one in a comments-only profile).
+    pub fn allows_feature(&self, feature: Feature) -> bool {
+        use Feature::*;
+        if self.read_only && feature.edits() {
+            return false;
+        }
+        if self.comments_only && feature.edits() && !matches!(feature, Comments | Markup | Shapes | Ink | Stamps | Measurement | FillSign) {
+            return false;
+        }
+        self.features.is_none_or(|set| set.contains(feature))
+    }
+
+    /// Whether interface part `id` ([`parts`]) shows.
+    pub fn shows_part(&self, id: &str) -> bool {
+        !self.hides(id)
+    }
+
+    /// Whether a right-hand panel can show: not hidden as `panel:<name>`, and its feature is on.
+    /// Panels that only list (comments, bookmarks, pages, fields, layers, attachments) belong to
+    /// the viewer; what they let you change is gated where it happens.
+    pub fn shows_panel(&self, panel: crate::RightPanel) -> bool {
+        use crate::RightPanel;
+        let (name, feature) = match panel {
+            RightPanel::Comments => ("comments", Feature::Viewer),
+            RightPanel::Bookmarks => ("bookmarks", Feature::Viewer),
+            RightPanel::Pages => ("pages", Feature::Viewer),
+            RightPanel::Fields => ("fields", Feature::Viewer),
+            RightPanel::Layers => ("layers", Feature::Viewer),
+            RightPanel::Attachments => ("attachments", Feature::Viewer),
+            RightPanel::Signatures => ("signatures", Feature::SignaturePanel),
+            RightPanel::Accessibility => ("accessibility", Feature::Accessibility),
+            RightPanel::Tags => ("tags", Feature::Accessibility),
+            RightPanel::Search => ("search", Feature::Search),
+            RightPanel::Compare => ("compare", Feature::App),
+        };
+        self.allows_feature(feature) && !self.hides(&format!("{}{name}", parts::PANEL_PREFIX))
+    }
+
+    /// Whether the tool group shows: not hidden, and at least one of its entries is allowed.
+    pub fn shows_group(&self, group: &ToolGroup) -> bool {
+        !self.hides_group(group.id) && group.sections.iter().flat_map(|s| s.items.iter()).any(|item| self.shows_item(item))
+    }
+
+    /// Whether a catalogue entry shows: its command (or, for a menu entry, one of its actions)
+    /// is allowed, and it is available unless [`Self::hide_planned`] says to leave it out.
+    pub fn shows_item(&self, item: &ToolItem) -> bool {
+        if self.hide_planned && item.availability != Availability::Ready {
+            return false;
+        }
+        self.allows_id(item.command) || item.actions.iter().any(|a| self.allows_id(a))
+    }
+
     /// Whether `id` (a command, `group:<tool group>` or a [`parts`] id) is hidden.
     pub fn hides(&self, id: &str) -> bool {
         self.hidden.contains(id)
@@ -58,6 +140,9 @@ impl UiProfile {
         if self.hides(spec.id) {
             return false;
         }
+        if self.features.is_some() && !features::command_feature(spec.id).is_some_and(|f| self.allows_feature(f)) {
+            return false;
+        }
         if self.read_only && changes_documents(spec.needs) {
             return false;
         }
@@ -67,26 +152,36 @@ impl UiProfile {
         !(self.comments_only && changes_more_than_comments(spec.needs))
     }
 
-    /// [`Self::allows_command`] by command id; an id that is not a registered command is allowed
-    /// unless hidden.
+    /// [`Self::allows_command`] by command id. An id that is not a registered command (a
+    /// catalogue entry still to come) is allowed unless hidden or its feature is off.
     pub fn allows_id(&self, id: &str) -> bool {
         match pdfcraft_engine::commands::command(id) {
             Some(spec) => self.allows_command(spec),
-            None => !self.hides(id),
+            None => !self.hides(id) && (self.features.is_none() || features::command_feature(id).is_some_and(|f| self.allows_feature(f))),
         }
     }
 
-    /// Whether the edit may be applied.
+    /// Whether the edit may be applied. Edits of an existing annotation count as the feature of
+    /// that annotation's kind, unknown here (use [`Self::allows_edit_in`] with the document).
     pub fn allows_edit(&self, edit: &Edit) -> bool {
+        self.allows_edit_in(edit, &|_, _| None)
+    }
+
+    /// [`Self::allows_edit`], where `annotation` gives the feature of the existing annotation at
+    /// (page, index), so moving a shape needs shapes and deleting a highlight needs markup.
+    pub fn allows_edit_in(&self, edit: &Edit, annotation: &dyn Fn(usize, usize) -> Option<Feature>) -> bool {
         if self.read_only {
             return false;
         }
-        !self.comments_only || is_comment_edit(edit)
+        if self.comments_only && !is_comment_edit(edit) {
+            return false;
+        }
+        self.features.is_none() || features::edit_allowed(edit, &|f| self.allows_feature(f), annotation)
     }
 
     /// Whether documents may be saved.
     pub fn allows_save(&self) -> bool {
-        !self.read_only && !(self.hides("file.save") && self.hides("file.save_as"))
+        !self.read_only && self.allows_feature(Feature::Save) && !(self.hides("file.save") && self.hides("file.save_as"))
     }
 }
 

@@ -56,6 +56,20 @@ impl PdfCraftApp {
         self.left_open = true;
     }
 
+    /// Uses `profile` from now on and puts down what it no longer allows: an armed tool, an open
+    /// panel or dialog. Hosts set the profile this way rather than assigning the field.
+    pub fn set_profile(&mut self, profile: crate::profile::UiProfile) {
+        self.profile = profile;
+        self.enforce_profile();
+    }
+
+    /// Puts down what the profile doesn't allow (after it changed).
+    pub(crate) fn enforce_profile(&mut self) {
+        if self.right.is_some_and(|p| !self.profile.shows_panel(p)) {
+            self.choose_right_panel(None);
+        }
+    }
+
     /// Enter a tool from the catalogue, Home, palette or control channel. Organize is a
     /// workspace, so opening its panel also opens the page grid (without toggling it off).
     pub(crate) fn select_tool(&mut self, id: &'static str) {
