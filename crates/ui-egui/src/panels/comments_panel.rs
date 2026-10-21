@@ -420,6 +420,8 @@ fn card(ui: &mut egui::Ui, view: &mut DocView, context: CardContext<'_>) -> Opti
     // What the profile lets this comment do: change it (the feature of its kind), reply to it and
     // set its status (comments), copy its text.
     let (changes, threads, copies) = (gate.changes(a), gate.threads(), gate.copies());
+    // Saving or opening its attached file is in the menu too.
+    let attaches = crate::comments::annotation_attachment_offers(info, a, gate.profile) != (false, false);
     let key = (a.page, a.index);
     let selected = view.comments.is_selected(key);
     // Several comments may be selected; the reply field (one draft) belongs to the one with
@@ -452,7 +454,7 @@ fn card(ui: &mut egui::Ui, view: &mut DocView, context: CardContext<'_>) -> Opti
                     ui.add(egui::Label::new(egui::RichText::new(m).font(theme::regular(11.0)).color(t.text_faint)).truncate());
                 }
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    if selected && allowed && (changes || threads || copies) {
+                    if selected && allowed && (changes || threads || copies || attaches) {
                         let more = icons::button(ui, "ellipsis", 22.0, false, tl!("More"));
                         open_menu = more.clicked();
                         more_rect = Some(more.rect);

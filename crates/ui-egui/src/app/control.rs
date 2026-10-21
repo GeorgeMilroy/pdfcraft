@@ -156,7 +156,11 @@ impl PdfCraftApp {
                     "sign" => !self.profile.allows_id("sign.digital"),
                     "certify" => !self.profile.allows_id("sign.certify"),
                     "fix-hairlines" => !self.profile.allows_id("prepress.hairlines"),
-                    _ => candidate.is_some_and(|d| !self.allows_dialog(d)),
+                    _ => match candidate {
+                        // Each Properties tab is its command's.
+                        Some(Dialog::Properties(tab)) => !self.profile.allows_id(tab.command()),
+                        d => d.is_some_and(|d| !self.allows_dialog(d)),
+                    },
                 };
                 if refused {
                     return Err(format!("the profile doesn't allow the {value} dialog"));

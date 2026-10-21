@@ -268,6 +268,7 @@ impl PdfCraftApp {
     pub(crate) fn save_custom_stamp(&mut self) {
         let d = std::mem::take(&mut self.stamp_draft);
         if !self.manages_custom_stamps() {
+            self.notify(tl!("Not allowed"));
             return;
         }
         let line = d.dynamic.then(|| d.line.trim().to_string()).filter(|l| !l.is_empty());
