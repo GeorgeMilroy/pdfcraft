@@ -271,6 +271,8 @@ fn same_rect(a: [f64; 4], b: [f64; 4]) -> bool {
 #[allow(clippy::cognitive_complexity)]
 fn crop_input(cx: &ImageCx<'_>, view: &mut DocView, i: usize, image: &pdfcraft_engine::PageImage) -> bool {
     let ImageCx { ui, resp, xf, ptr, page, info, press, gate, .. } = *cx;
+    // Pictures move and change only with content editing ([`super::Offers`]).
+    let gate = gate && super::Offers::get(ui.ctx()).edit;
     let painter = ui.painter();
     let Some(mode) = view.image_selection.as_mut().and_then(|s| s.crop.as_mut()) else { return false };
     let hover_pos = ptr.pos;
@@ -719,6 +721,8 @@ pub(super) fn turn_degrees(centre: Pos2, pointer: Pos2, snap: bool) -> f32 {
 #[allow(clippy::cognitive_complexity)]
 pub(crate) fn image_input(cx: &ImageCx<'_>, images: &[pdfcraft_engine::PageImage], view: &mut DocView) -> bool {
     let ImageCx { ui, resp, xf, ptr, page, doc, info, press, gate } = *cx;
+    // Pictures move and change only with content editing ([`super::Offers`]).
+    let gate = gate && super::Offers::get(ui.ctx()).edit;
     let boxes: Vec<Rect> = images.iter().map(|im| crate::canvas::image_screen_rect(im, xf, info, page)).collect();
     let painter = ui.painter();
     let hover_pos = ptr.pos;
@@ -1069,6 +1073,9 @@ pub(crate) fn image_context_menu(
     let Some(img) = images.get(hit) else { return };
     use pdfcraft_engine::ImageEdit as E;
     let raster = !img.is_form;
+    // Only the items the profile offers ([`super::Offers`]): changing the picture needs content
+    // editing, copying it out needs Copy, and the rest their own commands.
+    let offers = super::Offers::get(ui.ctx());
 
     // Whether `entry` was clicked; a click closes the menu.
     let picked = |ui: &mut egui::Ui, entry: egui::Response| {
@@ -1092,8 +1099,11 @@ pub(crate) fn image_context_menu(
             let entry = crate::icons::button(ui, name, 24.0, false, tip);
             picked(ui, entry)
         };
-        if icon(ui, "message-square", tl!("Add a sticky note here")) {
+        if offers.note && icon(ui, "message-square", tl!("Add a sticky note here")) {
             *action = Some(ImageAction::AddComment(page, hit));
+        }
+        if !offers.edit {
+            return;
         }
         if raster
             && icon(ui, "crop", tl!("Crop"))
@@ -1111,78 +1121,84 @@ pub(crate) fn image_context_menu(
 
     ui.separator();
 
-    if item(ui, true, tl!("Cut Image")) {
+    if offers.edit && offers.copy && item(ui, true, tl!("Cut Image")) {
         *action = Some(ImageAction::Cut(page, hit));
     }
-    if item(ui, true, tl!("Copy Image")) {
+    if offers.copy && item(ui, true, tl!("Copy Image")) {
         *action = Some(ImageAction::Copy(page, hit));
     }
-    if item(ui, can_paste, tl!("Paste")) {
+    if offers.edit && item(ui, can_paste, tl!("Paste")) {
         *action = Some(ImageAction::Paste(page, at));
     }
 
-    ui.separator();
+    if offers.edit {
+        ui.separator();
 
-    if raster && img.has_editor_crop() && item(ui, true, tl!("Remove crop")) {
-        view.pending_edit = edit(E::RemoveCrop);
-    }
-    if item(ui, true, tl!("Flip horizontal")) {
-        view.pending_edit = edit(E::Flip { horizontal: flip_user_axis(true, rotation) });
-    }
-    if item(ui, true, tl!("Flip vertical")) {
-        view.pending_edit = edit(E::Flip { horizontal: flip_user_axis(false, rotation) });
-    }
-
-    ui.menu_button(tl!("Arrange image"), |ui| {
-        use pdfcraft_engine::ArrangeOrder as A;
-        for (order, label) in [
-            (A::BringToFront, tl!("Bring to front")),
-            (A::SendToBack, tl!("Send to back")),
-            (A::BringForward, tl!("Bring forward")),
-            (A::SendBackward, tl!("Send backward")),
-        ] {
-            if item(ui, true, label) {
-                view.pending_edit = edit(E::Arrange(order));
-            }
+        if raster && img.has_editor_crop() && item(ui, true, tl!("Remove crop")) {
+            view.pending_edit = edit(E::RemoveCrop);
         }
-    });
+        if item(ui, true, tl!("Flip horizontal")) {
+            view.pending_edit = edit(E::Flip { horizontal: flip_user_axis(true, rotation) });
+        }
+        if item(ui, true, tl!("Flip vertical")) {
+            view.pending_edit = edit(E::Flip { horizontal: flip_user_axis(false, rotation) });
+        }
 
-    // Grouped Form artwork: draw its content in place, so its text and pictures edit one by
-    // one (#2964, #3005).
-    if img.is_form && item(ui, true, tl!("Ungroup")) {
-        view.image_selection = None;
-        view.pending_edit = edit(E::Ungroup);
+        ui.menu_button(tl!("Arrange image"), |ui| {
+            use pdfcraft_engine::ArrangeOrder as A;
+            for (order, label) in [
+                (A::BringToFront, tl!("Bring to front")),
+                (A::SendToBack, tl!("Send to back")),
+                (A::BringForward, tl!("Bring forward")),
+                (A::SendBackward, tl!("Send backward")),
+            ] {
+                if item(ui, true, label) {
+                    view.pending_edit = edit(E::Arrange(order));
+                }
+            }
+        });
+
+        // Grouped Form artwork: draw its content in place, so its text and pictures edit one by
+        // one (#2964, #3005).
+        if img.is_form && item(ui, true, tl!("Ungroup")) {
+            view.image_selection = None;
+            view.pending_edit = edit(E::Ungroup);
+        }
+        if item(ui, raster, tl!("Replace image")) {
+            *action = Some(ImageAction::Replace(page, hit));
+        }
     }
-    if item(ui, raster, tl!("Replace image")) {
-        *action = Some(ImageAction::Replace(page, hit));
-    }
-    if item(ui, raster, tl!("Save Image As…")) {
+    if offers.copy && item(ui, raster, tl!("Save Image As…")) {
         *action = Some(ImageAction::Save(page, hit));
     }
 
-    ui.separator();
-
-    if item(ui, true, tl!("Draw freehand")) {
+    if offers.draw || offers.redact {
+        ui.separator();
+    }
+    if offers.draw && item(ui, true, tl!("Draw freehand")) {
         *action = Some(ImageAction::DrawFreehand);
     }
-    if item(ui, true, tl!("Redact Image")) {
+    if offers.redact && item(ui, true, tl!("Redact Image")) {
         *action = Some(ImageAction::Redact(page, hit));
     }
 
-    ui.separator();
-
-    if item(ui, true, tl!("Create Link…")) {
+    if offers.link || offers.recognize {
+        ui.separator();
+    }
+    if offers.link && item(ui, true, tl!("Create Link…")) {
         *action = Some(ImageAction::Link(page, hit));
     }
-    if item(ui, true, tl!("Recognize Text…")) {
+    if offers.recognize && item(ui, true, tl!("Recognize Text…")) {
         *action = Some(ImageAction::Recognize(page));
     }
 
-    ui.separator();
+    if offers.edit {
+        ui.separator();
 
-    if item(ui, true, tl!("Delete")) {
-        view.image_selection = None;
-        view.pending_edit = edit(E::Delete);
+        if item(ui, true, tl!("Delete")) {
+            view.image_selection = None;
+            view.pending_edit = edit(E::Delete);
+        }
     }
 }
 

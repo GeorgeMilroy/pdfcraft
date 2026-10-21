@@ -36,6 +36,52 @@ use layout::{color32, editor_galley, editor_job, look_of, luminance, source_look
 
 const ACCENT: Color32 = Color32::from_rgb(0x14, 0x73, 0xE6);
 
+/// What the profile lets the page's editing input offer. The input code has no app to ask, so
+/// the app publishes this every frame ([`Offers::publish`]); unpublished, everything is offered.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Offers {
+    /// Editing page content: text, images and added content (`editContent`).
+    pub edit: bool,
+    /// Copying images out of the document.
+    pub copy: bool,
+    pub link: bool,
+    pub redact: bool,
+    pub recognize: bool,
+    /// A sticky note on a picture (its menu's Add a sticky note here).
+    pub note: bool,
+    /// Drawing freehand (its menu's Draw freehand).
+    pub draw: bool,
+}
+
+impl Offers {
+    const ALL: Self = Self { edit: true, copy: true, link: true, redact: true, recognize: true, note: true, draw: true };
+
+    fn id() -> egui::Id {
+        egui::Id::unique("pdfcraft-profile-offers")
+    }
+
+    pub(crate) fn of(profile: &crate::profile::UiProfile) -> Self {
+        Self {
+            edit: profile.allows_id("edit.edit_text"),
+            copy: profile.allows_id("edit.copy"),
+            link: profile.allows_id("edit.link"),
+            redact: profile.allows_id("redact.mark"),
+            recognize: profile.allows_id("ocr.recognize"),
+            note: profile.allows_id("comment.note"),
+            draw: profile.allows_id("comment.ink"),
+        }
+    }
+
+    pub(crate) fn publish(ctx: &egui::Context, profile: &crate::profile::UiProfile) {
+        let offers = Self::of(profile);
+        ctx.data_mut(|d| d.insert_temp(Self::id(), offers));
+    }
+
+    pub(crate) fn get(ctx: &egui::Context) -> Self {
+        ctx.data(|d| d.get_temp(Self::id())).unwrap_or(Self::ALL)
+    }
+}
+
 #[derive(Clone, Copy, PartialEq)]
 enum TextTarget {
     Block(usize),
@@ -695,6 +741,8 @@ pub(crate) struct ParagraphCx<'a> {
 pub(crate) fn page_input(cx: PageToolContext<'_>, lines: &[pdfcraft_engine::TextBlock], pcx: ParagraphCx<'_>, view: &mut DocView) -> bool {
     let PageToolContext { ui, resp, xf, ptr, page, doc, .. } = cx;
     let ParagraphCx { press, gate, hover, adding } = pcx;
+    // Content editing the profile refuses takes no press.
+    let gate = gate && Offers::get(ui.ctx()).edit;
     let info = &doc.info;
     if view.block_drag.is_some_and(|d| d.generation != doc.edit_generation()) {
         view.block_drag = None;
