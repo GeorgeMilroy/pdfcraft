@@ -143,6 +143,14 @@ impl UiProfile {
         if self.hides(spec.id) {
             return false;
         }
+        // An invisible certifying signature is a way of certifying.
+        if spec.id == "sign.certify_invisible" && self.hides("sign.certify") {
+            return false;
+        }
+        // Reading options are a tab of Document Properties.
+        if spec.id == "a11y.reading_options" && !self.allows_id("file.properties") {
+            return false;
+        }
         if self.features.is_some() && !features::command_feature(spec.id).is_some_and(|f| self.allows_feature(f)) {
             return false;
         }
