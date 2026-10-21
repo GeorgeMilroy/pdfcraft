@@ -29,6 +29,25 @@ pub struct PendingOverwrite {
     after: Box<dyn FnOnce(&mut PdfCraftApp) + Send>,
 }
 
+/// The command a queued view action stands for, which the profile must allow for it to run.
+fn view_action_command(action: &crate::canvas::ViewAction) -> Option<&'static str> {
+    use crate::canvas::ViewAction as A;
+    Some(match action {
+        A::InsertFromFile | A::InsertFromFileAt(_) => "page.insert",
+        A::ReplacePages => "page.replace",
+        A::Save => "file.save",
+        A::Extract => "page.extract",
+        A::Split => "page.split",
+        A::CopyPages { cut: true } => "page.cut",
+        A::CopyPages { cut: false } => "page.copy",
+        A::PastePages => "page.paste",
+        // Enhancing changes the page through the session, not an edit the profile could refuse.
+        A::EnhanceCamera | A::CameraLevel => "ocr.enhance_camera",
+        // Turning applies an edit, and the next command runs through `execute`: both are gated.
+        A::CancelCamera | A::CameraRotate { .. } | A::CameraNext(_) => return None,
+    })
+}
+
 /// Where Save writes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum SaveTarget {
@@ -275,13 +294,25 @@ impl PdfCraftApp {
     /// Apply any edit a view queued this frame (organize toolbar, keys).
     /// Returns false when a field refused the typing queued for it (its editor is open again).
     pub(crate) fn process_pending_edits(&mut self) -> bool {
+        // Once a frame: what the page's editing input may offer under the profile.
+        if let Some(ctx) = &self.ctx {
+            crate::edit_text_ui::Offers::publish(ctx, &self.profile);
+        }
         let Some(i) = self.active else { return true };
         let applied = self.apply_queued_edit(i);
         if !applied {
             // Nor may a shortcut pressed with it (⌘S right after Enter) run behind the refusal.
             self.deferred_commands.clear();
         }
-        match self.views.get_mut(i).and_then(|v| v.pending_action.take()) {
+        let action = self.views.get_mut(i).and_then(|v| v.pending_action.take());
+        // An action whose command the profile refuses doesn't run, whatever queued it.
+        if let Some(command) = action.as_ref().and_then(view_action_command)
+            && !self.profile.allows_id(command)
+        {
+            self.notify(tl!("Not allowed"));
+            return applied;
+        }
+        match action {
             Some(crate::canvas::ViewAction::InsertFromFile) => self.insert_from_file_dialog(),
             Some(crate::canvas::ViewAction::InsertFromFileAt(at)) => self.insert_from_file_at(Some(at)),
             Some(crate::canvas::ViewAction::ReplacePages) => self.replace_pages_dialog(),
@@ -424,10 +455,16 @@ impl PdfCraftApp {
             self.notify_tr("A document needs at least one page: copy instead");
             return;
         }
-        self.page_clipboard = Some(crate::PageClip { from: id, name: doc.name.clone(), bytes: doc.bytes.clone(), pages: pages.clone() });
-        if cut {
-            self.apply_edit(Edit::DeletePages { pages: pages.clone() });
+        let clip = crate::PageClip { from: id, name: doc.name.clone(), bytes: doc.bytes.clone(), pages: pages.clone() };
+        if !self.profile.allows_id(if cut { "page.cut" } else { "page.copy" }) {
+            self.notify(tl!("Not allowed"));
+            return;
         }
+        // A cut the document or the profile refuses leaves the clipboard as it was.
+        if cut && !self.apply_edit(Edit::DeletePages { pages: pages.clone() }) {
+            return;
+        }
+        self.page_clipboard = Some(clip);
         let what = if pages.len() == 1 { tl!("1 page").to_string() } else { crate::i18n::fmt(tl!("{n} pages"), &[("n", &pages.len().to_string())]) };
         if cut {
             self.notify_fmt("Cut {what}", &[("what", &what)]);
@@ -1112,13 +1149,18 @@ impl PdfCraftApp {
         let edit = match action {
             A::New => {
                 let n = self.session.get(id).map_or(0, |d| d.info.outline.len());
-                self.apply_edit(Edit::AddBookmark { parent: vec![], index: n, title: "Untitled".into(), page: current });
+                if !self.apply_edit(Edit::AddBookmark { parent: vec![], index: n, title: "Untitled".into(), page: current }) {
+                    return;
+                }
                 // Like Acrobat: the new bookmark starts in rename mode.
                 self.bookmark_rename = Some((vec![n], "Untitled".into()));
                 self.right = Some(crate::RightPanel::Bookmarks);
                 return;
             }
             A::StartRename(path) => {
+                if !self.profile.allows_feature(crate::features::Feature::Bookmarks) {
+                    return;
+                }
                 let title = self.session.get(id).and_then(|d| bookmark_at(&d.info.outline, &path)).map(|b| b.title.clone()).unwrap_or_default();
                 self.bookmark_rename = Some((path, title));
                 return;
