@@ -91,8 +91,8 @@ impl PdfCraftApp {
         // with no document step.
         self.profile.allows_command(spec)
             && (commands::is_enabled(spec, &self.session, self.active_ids().map(|(_, id)| id))
-            || spec.needs == commands::Needs::Undo && self.page_typing_unapplied()
-            || spec.needs == commands::Needs::Redo && self.open_box_can_redo())
+                || spec.needs == commands::Needs::Undo && self.page_typing_unapplied()
+                || spec.needs == commands::Needs::Redo && self.open_box_can_redo())
             && (spec.id != "edit.copy"
                 || self.active.and_then(|i| self.views.get(i)).is_some_and(|v| {
                     !v.organize && (v.all_text || v.selection_waits_for_text().is_some() || v.selected_text().is_some_and(|t| !t.is_empty()))
@@ -170,7 +170,7 @@ impl PdfCraftApp {
 
     fn execute_unguarded(&mut self, id: &str) -> bool {
         let Some(spec) = commands::command(id) else { return false };
-        if !self.profile.allows_command(spec) {
+        if !self.shows_command(spec.id) {
             return false;
         }
         // A brand without community links has no Discord, web page or GitHub to open.
@@ -871,6 +871,10 @@ impl PdfCraftApp {
         let mut specs: Vec<_> = COMMANDS.iter().filter_map(|c| c.shortcut_for(mac).map(|s| (c, s))).collect();
         specs.sort_by_key(|(_, s)| std::cmp::Reverse(s.modifier_count()));
         for (spec, s) in specs {
+            // A command the profile refuses leaves its key to whatever else wants it (the host).
+            if !self.shows_command(spec.id) {
+                continue;
+            }
             // Keep the canvas's silent no-op when there is no previous/next view to visit.
             if matches!(spec.id, "view.previous_view" | "view.next_view") && !self.command_enabled(spec) {
                 continue;
