@@ -873,6 +873,7 @@ struct PageEnv<'a> {
     fill_text_size: f64,
     today: (i64, u32, u32),
     offers: Offers,
+    profile: &'a crate::profile::UiProfile,
 }
 
 /// What the profile ([`crate::profile::UiProfile`]) offers on the page this frame: what it refuses
@@ -1153,12 +1154,13 @@ fn page_tool_input(ui: &mut egui::Ui, view: &mut DocView, frame: &mut PageFrame<
         units,
         fill_text_size,
         offers,
+        profile,
         ..
     } = frame.env;
     let PageSlot { i, xf, .. } = *slot;
     let PageFrame { resp, ptr, pointer, .. } = *frame;
     let cx = PageToolContext { ui, resp, xf: &xf, ptr, page: i, doc, info };
-    let pcx = comments::PageCx { page: i, xf: &xf, ptr, info, tool, prefs, allowed, hidden: comments_hidden, redact_mark };
+    let pcx = comments::PageCx { page: i, xf: &xf, ptr, info, tool, prefs, allowed, profile, hidden: comments_hidden, redact_mark };
     if let QuickTool::Measure(measure_tool) = tool {
         crate::measure_ui::page_input(ui, resp, doc, view, &pcx, measure_tool, units);
     }
@@ -1596,13 +1598,14 @@ fn page_overlays(ui: &mut egui::Ui, view: &mut DocView, frame: &mut PageFrame<'_
         tool,
         unobstructed,
         offers,
+        profile,
         ..
     } = frame.env;
     let PageSlot { i, xf, .. } = *slot;
     let PageFrame { resp, ptr, pointer, .. } = *frame;
     let painter = ui.painter();
     let tool_cx = PageToolContext { ui, resp, xf: &xf, ptr, page: i, doc, info };
-    let pcx = comments::PageCx { page: i, xf: &xf, ptr, info, tool, prefs, allowed, hidden: comments_hidden, redact_mark };
+    let pcx = comments::PageCx { page: i, xf: &xf, ptr, info, tool, prefs, allowed, profile, hidden: comments_hidden, redact_mark };
     if tool == QuickTool::Select && !input.consumed && offers.copy {
         crate::image_pick::page_input(resp, &xf, i, info, doc, pointer, view);
     }
@@ -1749,7 +1752,7 @@ fn paint_field_highlights(painter: &egui::Painter, xf: &PageXform, info: &DocInf
 }
 
 fn draw_page(ui: &mut egui::Ui, view: &mut DocView, frame: &mut PageFrame<'_>, i: usize) {
-    let PageEnv { allowed, comments_hidden, doc, editing_content, info, ppp, prefs, rects, redact_mark, scale, t, tool, .. } = frame.env;
+    let PageEnv { allowed, comments_hidden, doc, editing_content, info, ppp, prefs, profile, rects, redact_mark, scale, t, tool, .. } = frame.env;
     let PageFrame { ptr, origin, visible, pressed, pointer, .. } = *frame;
     let r = snap_to_pixels(rects[i].translate(origin.to_vec2()), ppp);
     if !r.intersects(visible.expand(400.0)) {
@@ -1788,7 +1791,7 @@ fn draw_page(ui: &mut egui::Ui, view: &mut DocView, frame: &mut PageFrame<'_>, i
     let slot = PageSlot { i, r, xf };
     let input = page_tool_input(ui, view, frame, &slot);
     let painter = ui.painter();
-    let pcx = comments::PageCx { page: i, xf: &xf, ptr, info, tool, prefs, allowed, hidden: comments_hidden, redact_mark };
+    let pcx = comments::PageCx { page: i, xf: &xf, ptr, info, tool, prefs, allowed, profile, hidden: comments_hidden, redact_mark };
     let preview_target = (matches!(tool, QuickTool::Select | QuickTool::Fill(_)) && !comments_hidden).then_some(view.comments.selected).flatten();
     view.signature_drag.prepare(ui.ctx(), doc, preview_target, scale);
     view.signature_drag.paint(painter, &pcx, &view.comments, view.pending_edit.as_ref());
@@ -1842,6 +1845,7 @@ fn draw_pages(
         visible_pages,
         y_shift,
         offers,
+        profile,
         ..
     } = *env;
     // egui's drag responses accept every pointer button. Keep a wheel gesture from also
@@ -2091,7 +2095,7 @@ fn draw_pages(
                 ui.separator();
             }
         }
-        canvas_action = comments::context_menu(ui, view, info, prefs, allowed, can_modify).or(copy_image);
+        canvas_action = comments::context_menu(ui, view, info, prefs, comments::MenuGate { profile, allowed, can_copy, can_modify }).or(copy_image);
     });
     *out = PageOut {
         canvas_action,
@@ -2999,6 +3003,7 @@ pub fn document_area(app: &mut PdfCraftApp, index: usize, ui: &mut egui::Ui) {
     // Text selection runs for the Select tool and for the markup tools (highlight…).
     let selects_text = tool_selects_text(tool, preparing);
     let prefs = &app.comment_prefs;
+    let profile = &app.profile;
     let redact_mark = (app.redact_prefs.hover_fill, app.redact_prefs.opacity);
     let units = app.units;
     let allowed = doc.allows_annotation();
@@ -3100,6 +3105,7 @@ pub fn document_area(app: &mut PdfCraftApp, index: usize, ui: &mut egui::Ui) {
         fill_text_size: app.fill_text_size,
         today,
         offers,
+        profile,
     };
     let mut page_out = PageOut::default();
     let out = page_scroll(ui, scroll, egui::Id::unique(("page-view-scope", view.id)), |ui, viewport| {
@@ -3153,7 +3159,7 @@ pub fn document_area(app: &mut PdfCraftApp, index: usize, ui: &mut egui::Ui) {
     // One crop, then back to selecting (as Acrobat does).
     let cropped = view.pending_edit.as_ref().is_some_and(|e| matches!(e, pdfcraft_engine::Edit::SetPageBox { .. }));
     let mut tool = app.quick_tool;
-    comments::keys(ui.ctx(), view, &mut tool, allowed);
+    comments::keys(ui.ctx(), view, info, &mut tool, allowed, &app.profile);
     if preparing {
         crate::prepare::keys(ui.ctx(), view);
     }
@@ -3182,15 +3188,16 @@ pub fn document_area(app: &mut PdfCraftApp, index: usize, ui: &mut egui::Ui) {
     let field_props = field_props.then(|| view.prepare.selected.clone()).flatten();
     match canvas_action {
         Some(comments::CanvasAction::Edit(e)) => view.pending_edit = Some(*e),
-        // `choose_right_panel` would borrow all of `app` while `view` is held; same effect.
-        Some(comments::CanvasAction::OpenComments) => {
+        // `choose_right_panel` would borrow all of `app` while `view` is held; same effect, and
+        // the same refusal of a panel the profile hides.
+        Some(comments::CanvasAction::OpenComments) if app.profile.shows_panel(RightPanel::Comments) => {
             app.right = Some(RightPanel::Comments);
             app.comments_panel_closed = false;
         }
         Some(comments::CanvasAction::Properties(p, i)) => open_props = Some((p, i)),
         Some(comments::CanvasAction::CopyImage(p, i)) => image_action = Some(crate::edit_text_ui::ImageAction::Copy(p, i)),
         Some(comments::CanvasAction::CopyImageFile(p, i)) => image_action = Some(crate::edit_text_ui::ImageAction::CopyFile(p, i)),
-        None => {}
+        Some(comments::CanvasAction::OpenComments) | None => {}
     }
     schedule_presentation_turn(ui, view, present, clicked_link.is_some());
     let remote_open = follow_link(app, index, clicked_link);

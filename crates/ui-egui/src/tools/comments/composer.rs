@@ -5,6 +5,7 @@ use super::{
     Color32, CommentPrefs, CommentTool, CornerRadius, DocInfo, DocView, Edit, LineEnding, NoteIcon, PagePointer, QuickTool, Shape, Tokens, pos2,
     theme,
 };
+use crate::profile::UiProfile;
 
 /// The floating composer card (new note, new text box, edit). Returns the edit to apply.
 pub(crate) fn composer(ctx: &egui::Context, view: &mut DocView, info: &DocInfo, prefs: &CommentPrefs) -> Option<Edit> {
@@ -17,6 +18,7 @@ pub(crate) fn composer(ctx: &egui::Context, view: &mut DocView, info: &DocInfo, 
         }
         return None;
     };
+    let profile = UiProfile::default();
     let cx = PageCx {
         page,
         xf: &xf,
@@ -25,6 +27,7 @@ pub(crate) fn composer(ctx: &egui::Context, view: &mut DocView, info: &DocInfo, 
         tool: QuickTool::Select,
         prefs,
         allowed: true,
+        profile: &profile,
         hidden: false,
         redact_mark: ([0.89, 0.13, 0.13], 1.0),
     };

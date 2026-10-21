@@ -3,9 +3,11 @@ use super::geometry::{
     resized, snapped_caret,
 };
 use super::paint::{drawn_shape, edit_anchor, erase, new_comment};
+use super::state::feature_of;
 use super::state::{Composer, ComposerKind, Gesture, PageCx};
 use super::{Annotation, CommentPrefs, CommentTool, DocInfo, DocView, Edit, Pos2, QuickTool, Rect, Shape, vec2};
 use crate::page_cursor::{Layer, Subject};
+use crate::profile::UiProfile;
 
 /// Comment input on one page, before text selection runs. Returns `true` when the pointer
 /// gesture belongs to commenting (text selection must ignore it).
@@ -103,7 +105,7 @@ fn press_point(cx: &PageCx<'_>) -> Option<Pos2> {
 
 /// Whether `p` is on a resize handle of the selected comment, when it is a resizable `pick`.
 fn on_handle(cx: &PageCx<'_>, view: &DocView, p: Pos2, pick: impl Fn(&Annotation) -> bool) -> bool {
-    view.comments.selected.filter(|(page, _)| *page == cx.page).and_then(|(_, i)| cx.get(i)).filter(|a| pick(a) && cx.allowed).is_some_and(|a| {
+    view.comments.selected.filter(|(page, _)| *page == cx.page).and_then(|(_, i)| cx.get(i)).filter(|a| pick(a) && cx.changes(a)).is_some_and(|a| {
         (resizable(a) && HANDLES.into_iter().any(|h| handle_pos(cx.screen_rect(a), h).distance(p) <= 7.0))
             || (grabs_points(cx.tool) && reshapable(a) && point_handle(cx, a, p).is_some())
     })
@@ -163,13 +165,14 @@ fn select_input(
     let selected = cv.selected.filter(|(p, _)| *p == cx.page).and_then(|(_, i)| cx.get(i));
     // Handles of a selected, resizable comment.
     let handle_at = |p: Pos2| -> Option<(i8, i8)> {
-        let a = selected.filter(|a| cx.allowed && resizable(a))?;
+        let a = selected.filter(|a| cx.changes(a) && resizable(a))?;
         let r = cx.screen_rect(a);
         HANDLES.into_iter().find(|h| handle_pos(r, *h).distance(p) <= 7.0)
     };
     // Ends and corners of a selected line, connected lines, polygon or cloud.
-    let point_at =
-        |p: Pos2| -> Option<usize> { selected.filter(|a| cx.allowed && grabs_points(cx.tool) && reshapable(a)).and_then(|a| point_handle(cx, a, p)) };
+    let point_at = |p: Pos2| -> Option<usize> {
+        selected.filter(|a| cx.changes(a) && grabs_points(cx.tool) && reshapable(a)).and_then(|a| point_handle(cx, a, p))
+    };
     let mut consumed = false;
     if let Some(p) = pointer {
         if point_at(p).is_some() {
@@ -219,7 +222,7 @@ fn select_input(
         {
             cv.selected = Some((cx.page, a.index));
             cv.reveal = true;
-            if cx.allowed {
+            if cx.changes(a) {
                 cv.gesture = Some(Gesture::Move { page: cx.page, index: a.index, from: o });
             }
             consumed = true;
@@ -284,8 +287,8 @@ fn select_input(
     }
     if resp.double_clicked()
         && on_page
-        && cx.allowed
         && let Some(a) = pointer.and_then(|p| cx.hit(p))
+        && cx.changes(a)
     {
         cv.selected = Some((cx.page, a.index));
         cv.composer = Some(Composer {
@@ -594,8 +597,9 @@ impl Gestures<'_> {
     }
 }
 
-/// Delete / Escape handling for comments (only while no text field has focus).
-pub(crate) fn keys(ctx: &egui::Context, view: &mut DocView, tool: &mut QuickTool, allowed: bool) {
+/// Delete / Escape handling for comments (only while no text field has focus). Delete leaves a
+/// locked comment, and one whose kind the profile refuses.
+pub(crate) fn keys(ctx: &egui::Context, view: &mut DocView, info: &DocInfo, tool: &mut QuickTool, allowed: bool, profile: &UiProfile) {
     if !ctx.input(|i| i.pointer.any_down()) {
         view.comments.cancelled_drag = false;
     }
@@ -612,6 +616,7 @@ pub(crate) fn keys(ctx: &egui::Context, view: &mut DocView, tool: &mut QuickTool
     }
     if allowed
         && let Some((page, index)) = cv.selected
+        && info.annotations.iter().any(|a| a.page == page && a.index == index && !a.locked && profile.allows_feature(feature_of(a)))
         && ctx.input(|i| i.key_pressed(egui::Key::Delete) || i.key_pressed(egui::Key::Backspace))
     {
         cv.selected = None;

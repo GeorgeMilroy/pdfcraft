@@ -369,8 +369,15 @@ impl PdfCraftApp {
         }
     }
 
-    /// Save an attachment to disk, or open a PDF attachment in a new tab.
+    /// Save an attachment to disk, or open a PDF attachment in a new tab, unless the profile
+    /// refuses it ([`comments::attachment_offers`]).
     pub fn attachment_action(&mut self, doc: DocId, index: usize, open: bool) {
+        let (save_on, open_on) = comments::attachment_offers(&self.profile);
+        let allowed = if open { open_on } else { save_on };
+        if !allowed {
+            self.notify(tl!("Not allowed"));
+            return;
+        }
         let Some(d) = self.session.get(doc) else { return };
         let Some(att) = d.info.attachments.get(index).cloned() else { return };
         let data = pdfcraft_render::attachment_data(&d.bytes, d.password.as_deref(), &att);

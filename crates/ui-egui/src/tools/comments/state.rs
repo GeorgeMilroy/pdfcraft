@@ -243,11 +243,54 @@ pub(crate) struct PageCx<'a> {
     pub redact_mark: ([f64; 3], f64),
     /// The document allows commenting.
     pub allowed: bool,
+    /// What the host lets the interface do: a comment whose kind it refuses stays put.
+    pub profile: &'a crate::profile::UiProfile,
     /// Comments are hidden (Hide all comments): nothing to select.
     pub hidden: bool,
 }
 
+/// The feature that owns an existing comment, from its kind ([`crate::features::annotation_feature`]).
+pub(crate) fn feature_of(a: &Annotation) -> crate::features::Feature {
+    crate::features::annotation_feature(&a.subtype, a.intent.as_deref(), a.fill_sign)
+}
+
+/// What a comment's menus may offer: the profile hides what it refuses, and the document's
+/// permissions grey out what they don't allow.
+#[derive(Clone, Copy)]
+pub(crate) struct MenuGate<'a> {
+    pub profile: &'a crate::profile::UiProfile,
+    /// The document allows commenting.
+    pub allowed: bool,
+    /// The document allows copying text.
+    pub can_copy: bool,
+    /// The document's pages may change (Flatten comments draws into them).
+    pub can_modify: bool,
+}
+
+impl MenuGate<'_> {
+    /// Whether the profile lets `a` change: the feature of its kind is on.
+    pub(crate) fn changes(&self, a: &Annotation) -> bool {
+        self.profile.allows_feature(feature_of(a))
+    }
+
+    /// Whether replies and review status show: they are part of a comment thread.
+    pub(crate) fn threads(&self) -> bool {
+        self.profile.allows_feature(crate::features::Feature::Comments)
+    }
+
+    /// Whether Copy text shows: the profile allows copying (the document's permission greys it).
+    pub(crate) fn copies(&self) -> bool {
+        self.profile.allows_id("edit.copy")
+    }
+}
+
 impl PageCx<'_> {
+    /// Whether `a` may be moved, resized or edited here: the document allows commenting and the
+    /// profile the feature of its kind.
+    pub(super) fn changes(&self, a: &Annotation) -> bool {
+        self.allowed && self.profile.allows_feature(feature_of(a))
+    }
+
     pub(super) fn to_user(&self, p: Pos2) -> [f64; 2] {
         let (vx, vy) = self.xf.screen_to_view(p);
         let u = self.info.pages[self.page].view_to_user(vx, vy);

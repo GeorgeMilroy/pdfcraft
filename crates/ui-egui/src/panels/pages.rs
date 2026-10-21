@@ -15,6 +15,12 @@ pub(super) fn page_tools(ui: &mut egui::Ui, enabled: bool) -> Option<&'static st
         ("page.extract", tl!("Extract the selected pages…")),
         ("page.delete", tl!("Delete the selected pages")),
     ];
+    // Only what the profile allows, and no menu when it allows none of them.
+    let profile = crate::dialogs::frame_profile(ui.ctx());
+    let tools: Vec<(&'static str, &str)> = tools.into_iter().filter(|(id, _)| profile.allows_id(id)).collect();
+    if tools.is_empty() {
+        return None;
+    }
     let mut picked = None;
     ui.add_enabled_ui(enabled, |ui| {
         let more = icons::button(ui, "ellipsis", 26.0, false, tl!("Page tools"));

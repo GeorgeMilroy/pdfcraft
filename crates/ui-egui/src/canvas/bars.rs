@@ -385,9 +385,9 @@ pub(super) fn quick_bar(app: &mut PdfCraftApp, area: Rect, ui: &mut egui::Ui) {
                         _ => None,
                     };
                     // The tool in use, or the first one the profile allows; none hides Fill & Sign.
-                    let shown = current_fill
-                        .filter(|f| app.profile.allows_id(f.command()))
-                        .or_else(|| crate::fill_sign::FILL_TOOLS.into_iter().find(|f| app.profile.allows_id(f.command())));
+                    // A tool in use that the profile refuses counts as none in use.
+                    let current_fill = current_fill.filter(|f| app.profile.allows_id(f.command()));
+                    let shown = current_fill.or_else(|| crate::fill_sign::FILL_TOOLS.into_iter().find(|f| app.profile.allows_id(f.command())));
                     if let Some(shown) = shown {
                         let resp = icons::button(
                             ui,
@@ -412,12 +412,14 @@ pub(super) fn quick_bar(app: &mut PdfCraftApp, area: Rect, ui: &mut egui::Ui) {
                             .align(egui::RectAlign::RIGHT_START)
                             .gap(6.0)
                             .show(|ui| {
+                                let mut rows = false;
                                 for tool in crate::fill_sign::FILL_TOOLS {
                                     if matches!(tool, crate::fill_sign::FillTool::Signature | crate::fill_sign::FillTool::Initials)
                                         || !app.profile.allows_id(tool.command())
                                     {
                                         continue;
                                     }
+                                    rows = true;
                                     let on = current_fill == Some(tool);
                                     let (row, click) = ui.allocate_exact_size(vec2(180.0, 28.0), Sense::click());
                                     let press = theme::Press::track(ui, &click);
@@ -453,7 +455,9 @@ pub(super) fn quick_bar(app: &mut PdfCraftApp, area: Rect, ui: &mut egui::Ui) {
                                 if !app.profile.allows_id("sign.fill.signature") && !app.profile.allows_id("sign.fill.initials") {
                                     return;
                                 }
-                                ui.separator();
+                                if rows {
+                                    ui.separator();
+                                }
                                 if let Some(command) = crate::fill_sign::signature_entries(ui, app, &t) {
                                     app.execute(command);
                                     ui.close();

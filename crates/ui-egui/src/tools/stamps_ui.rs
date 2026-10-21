@@ -95,8 +95,13 @@ pub(crate) fn create_body(ui: &mut egui::Ui, app: &mut PdfCraftApp, t: &Tokens) 
     (save, cancel)
 }
 
-/// The Custom stamps section of the stamps palette.
+/// The Custom stamps section of the stamps palette. It needs the profile's comment.stamp, and
+/// managing the library needs [`crate::profile::parts::STAMPS_CUSTOM`] too.
 pub(crate) fn palette_section(app: &mut PdfCraftApp, ui: &mut egui::Ui, t: &Tokens) {
+    let manages = app.manages_custom_stamps();
+    if !app.profile.allows_id("comment.stamp") || (!manages && app.custom_stamps.is_empty()) {
+        return;
+    }
     widgets::section_title(ui, tl!("Custom"));
     let mut remove = None;
     let mut categories: Vec<String> = app.custom_stamps.iter().map(|s| s.category.clone()).collect();
@@ -110,12 +115,14 @@ pub(crate) fn palette_section(app: &mut PdfCraftApp, ui: &mut egui::Ui, t: &Toke
             if resp.clicked() {
                 app.quick_tool = QuickTool::CustomStamp(i);
             }
-            resp.context_menu(|ui| {
-                if ui.button(tl!("Delete stamp")).clicked() {
-                    remove = Some(i);
-                    ui.close();
-                }
-            });
+            if manages {
+                resp.context_menu(|ui| {
+                    if ui.button(tl!("Delete stamp")).clicked() {
+                        remove = Some(i);
+                        ui.close();
+                    }
+                });
+            }
         }
     }
     if let Some(i) = remove {
@@ -123,14 +130,23 @@ pub(crate) fn palette_section(app: &mut PdfCraftApp, ui: &mut egui::Ui, t: &Toke
         app.quick_tool = QuickTool::Select;
     }
     ui.add_space(4.0);
-    if widgets::pill_button(ui, tl!("Create custom stamp…"), false).on_hover_text(tl!("From a PDF page or an image")).clicked() {
+    if manages && widgets::pill_button(ui, tl!("Create custom stamp…"), false).on_hover_text(tl!("From a PDF page or an image")).clicked() {
         app.pick_stamp_file();
     }
 }
 
 impl PdfCraftApp {
+    /// Whether the profile lets the stamp library change: stamps are on and
+    /// [`crate::profile::parts::STAMPS_CUSTOM`] isn't hidden.
+    pub(crate) fn manages_custom_stamps(&self) -> bool {
+        self.profile.allows_id("comment.stamp") && self.profile.shows_part(crate::profile::parts::STAMPS_CUSTOM)
+    }
+
     /// Create ▸ choose a PDF or an image for a new custom stamp.
     pub(crate) fn pick_stamp_file(&mut self) {
+        if !self.manages_custom_stamps() {
+            return;
+        }
         #[cfg(not(target_arch = "wasm32"))]
         {
             let read = |app: &mut Self, path: std::path::PathBuf| match std::fs::read(&path) {
@@ -157,6 +173,9 @@ impl PdfCraftApp {
 
     /// Open the Create Custom Stamp dialog for a file.
     pub fn start_custom_stamp(&mut self, file: String, bytes: Vec<u8>) {
+        if !self.manages_custom_stamps() {
+            return;
+        }
         if bytes.len() > MAX_STAMP_BYTES {
             self.notify_fmt("{file} is too large for a stamp (at most {n} MB)", &[("file", &file), ("n", &(MAX_STAMP_BYTES >> 20).to_string())]);
             return;
@@ -170,6 +189,9 @@ impl PdfCraftApp {
     /// Save the dialog's stamp in the library and choose it.
     pub(crate) fn save_custom_stamp(&mut self) {
         let d = std::mem::take(&mut self.stamp_draft);
+        if !self.manages_custom_stamps() {
+            return;
+        }
         self.custom_stamps.push(CustomStamp { category: d.category.trim().into(), name: d.name.trim().into(), file: d.file, page: 0, data: d.data });
         self.quick_tool = QuickTool::CustomStamp(self.custom_stamps.len() - 1);
     }
