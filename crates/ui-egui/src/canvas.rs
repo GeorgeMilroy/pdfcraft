@@ -3024,6 +3024,7 @@ pub fn document_area(app: &mut PdfCraftApp, index: usize, ui: &mut egui::Ui) {
         | QuickTool::Snapshot => false,
     };
     let prefs = &app.comment_prefs;
+    let profile = &app.profile;
     let redact_mark = (app.redact_prefs.hover_fill, app.redact_prefs.opacity);
     let units = app.units;
     let allowed = doc.allows_annotation();
@@ -3326,7 +3327,7 @@ pub fn document_area(app: &mut PdfCraftApp, index: usize, ui: &mut egui::Ui) {
             }
 
             // Comments: tools, selection, moving and resizing come before text selection.
-            let pcx = comments::PageCx { page: i, xf: &xf, info, tool, prefs, allowed, hidden: comments_hidden, redact_mark };
+            let pcx = comments::PageCx { page: i, xf: &xf, info, tool, prefs, allowed, profile, hidden: comments_hidden, redact_mark };
             if let QuickTool::Measure(measure_tool) = tool {
                 crate::measure_ui::page_input(ui, &resp, doc, view, &pcx, measure_tool, units);
             }
@@ -4041,7 +4042,7 @@ pub fn document_area(app: &mut PdfCraftApp, index: usize, ui: &mut egui::Ui) {
                     ui.separator();
                 }
             }
-            canvas_action = comments::context_menu(ui, view, info, prefs, allowed).or(copy_image);
+            canvas_action = comments::context_menu(ui, view, info, prefs, comments::MenuGate { profile, allowed, can_copy }).or(copy_image);
         });
         (wanted, visible_now)
     });
@@ -4237,7 +4238,7 @@ pub fn document_area(app: &mut PdfCraftApp, index: usize, ui: &mut egui::Ui) {
     // One crop, then back to selecting (as Acrobat does).
     let cropped = view.pending_edit.as_ref().is_some_and(|e| matches!(e, pdfcraft_engine::Edit::SetPageBox { .. }));
     let mut tool = app.quick_tool;
-    comments::keys(ui.ctx(), view, &mut tool, allowed);
+    comments::keys(ui.ctx(), view, info, &mut tool, allowed, &app.profile);
     if preparing {
         crate::prepare::keys(ui.ctx(), view);
     }
@@ -4266,15 +4267,16 @@ pub fn document_area(app: &mut PdfCraftApp, index: usize, ui: &mut egui::Ui) {
     let field_props = field_props.then(|| view.prepare.selected.clone()).flatten();
     match canvas_action {
         Some(comments::CanvasAction::Edit(e)) => view.pending_edit = Some(*e),
-        // `choose_right_panel` would borrow all of `app` while `view` is held; same effect.
-        Some(comments::CanvasAction::OpenComments) => {
+        // `choose_right_panel` would borrow all of `app` while `view` is held; same effect, and
+        // the same refusal of a panel the profile hides.
+        Some(comments::CanvasAction::OpenComments) if app.profile.shows_panel(RightPanel::Comments) => {
             app.right = Some(RightPanel::Comments);
             app.comments_panel_closed = false;
         }
         Some(comments::CanvasAction::Properties(p, i)) => open_props = Some((p, i)),
         Some(comments::CanvasAction::CopyImage(p, i)) => image_action = Some(crate::edit_text_ui::ImageAction::Copy(p, i)),
         Some(comments::CanvasAction::CopyImageFile(p, i)) => image_action = Some(crate::edit_text_ui::ImageAction::CopyFile(p, i)),
-        None => {}
+        Some(comments::CanvasAction::OpenComments) | None => {}
     }
     // Full screen: the click turns the page unless it did something else first. It waits out the
     // double-click time: turning on the first click's release sent a double-click's second click,
@@ -5129,9 +5131,9 @@ fn quick_bar(app: &mut PdfCraftApp, area: Rect, ui: &mut egui::Ui) {
                         _ => None,
                     };
                     // The tool in use, or the first one the profile allows; none hides Fill & Sign.
-                    let shown = current_fill
-                        .filter(|f| app.profile.allows_id(f.command()))
-                        .or_else(|| crate::fill_sign::FILL_TOOLS.into_iter().find(|f| app.profile.allows_id(f.command())));
+                    // A tool in use that the profile refuses counts as none in use.
+                    let current_fill = current_fill.filter(|f| app.profile.allows_id(f.command()));
+                    let shown = current_fill.or_else(|| crate::fill_sign::FILL_TOOLS.into_iter().find(|f| app.profile.allows_id(f.command())));
                     if let Some(shown) = shown {
                         let resp = icons::button(
                             ui,
@@ -5156,12 +5158,14 @@ fn quick_bar(app: &mut PdfCraftApp, area: Rect, ui: &mut egui::Ui) {
                             .align(egui::RectAlign::RIGHT_START)
                             .gap(6.0)
                             .show(|ui| {
+                                let mut rows = false;
                                 for tool in crate::fill_sign::FILL_TOOLS {
                                     if matches!(tool, crate::fill_sign::FillTool::Signature | crate::fill_sign::FillTool::Initials)
                                         || !app.profile.allows_id(tool.command())
                                     {
                                         continue;
                                     }
+                                    rows = true;
                                     let on = current_fill == Some(tool);
                                     let (row, click) = ui.allocate_exact_size(vec2(180.0, 28.0), Sense::click());
                                     let press = theme::Press::track(ui, &click);
@@ -5197,7 +5201,9 @@ fn quick_bar(app: &mut PdfCraftApp, area: Rect, ui: &mut egui::Ui) {
                                 if !app.profile.allows_id("sign.fill.signature") && !app.profile.allows_id("sign.fill.initials") {
                                     return;
                                 }
-                                ui.separator();
+                                if rows {
+                                    ui.separator();
+                                }
                                 if let Some(command) = crate::fill_sign::signature_entries(ui, app, &t) {
                                     app.execute(command);
                                     ui.close();

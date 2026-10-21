@@ -11,8 +11,9 @@ use pdfcraft_engine::{Edit, NoteIcon, ReviewState, Shape};
 use pdfcraft_render::{Annotation, DocInfo};
 
 use crate::canvas::DocView;
-use crate::comments::{CommentPrefs, CommentTool, SortBy, color32, status_badge};
+use crate::comments::{CommentPrefs, CommentTool, MenuGate, SortBy, color32, status_badge};
 use crate::panels::Nav;
+use crate::profile::UiProfile;
 use crate::theme::{self, Tokens};
 use crate::{icons, widgets};
 
@@ -109,10 +110,11 @@ pub(crate) fn show(
     info: &DocInfo,
     view: &mut DocView,
     prefs: &CommentPrefs,
-    allowed: bool,
+    gate: MenuGate<'_>,
     nav: &mut Option<Nav>,
 ) -> Option<Edit> {
     crate::widgets::begin_dialog(ui);
+    let allowed = gate.allowed;
     let mut edit = None;
     // Search (the header's magnifier toggles it).
     if let Some(q) = view.comments.search.as_mut() {
@@ -124,7 +126,7 @@ pub(crate) fn show(
         ui.add_space(6.0);
     }
     // "Add a comment": a sticky note on the current page, near its top-right corner.
-    if allowed {
+    if allowed && gate.profile.allows_id("comment.note") {
         let r = ui.add(
             crate::widgets::line(&mut view.comments.add_box).hint_text(tl!("Add a comment")).desired_width(f32::INFINITY).id_salt("comment-add-box"),
         );
@@ -264,7 +266,7 @@ pub(crate) fn show(
             continue;
         }
         let thread = replies_of(a);
-        if let Some(e) = card(ui, t, a, thread, info, view, prefs, allowed, nav) {
+        if let Some(e) = card(ui, t, a, thread, info, view, prefs, gate, nav) {
             edit = Some(e);
         }
     }
@@ -280,10 +282,14 @@ fn card(
     info: &DocInfo,
     view: &mut DocView,
     prefs: &CommentPrefs,
-    allowed: bool,
+    gate: MenuGate<'_>,
     nav: &mut Option<Nav>,
 ) -> Option<Edit> {
     let mut edit = None;
+    let allowed = gate.allowed;
+    // What the profile lets this comment do: change it (the feature of its kind), reply to it and
+    // set its status (comments), copy its text.
+    let (changes, threads, copies) = (gate.changes(a), gate.threads(), gate.copies());
     let key = (a.page, a.index);
     let selected = view.comments.selected == Some(key);
     let color = a.color.map(|c| color32(c.map(f64::from))).unwrap_or(t.accent);
@@ -309,14 +315,14 @@ fn card(
                     ui.add(egui::Label::new(egui::RichText::new(m).font(theme::regular(11.0)).color(t.text_faint)).truncate());
                 }
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                    if selected && allowed {
+                    if selected && allowed && (changes || threads || copies) {
                         let more = icons::button(ui, "ellipsis", 22.0, false, tl!("More"));
                         open_menu = more.clicked();
                         more_rect = Some(more.rect);
                     }
                     // Acrobat's per-comment checkmark: a toggle on the selected card, a mark otherwise.
                     let tip = if marked { tl!("Remove checkmark") } else { tl!("Mark with checkmark") };
-                    if selected && allowed {
+                    if selected && allowed && changes {
                         if icons::button(ui, "circle-check", 22.0, marked, tip).clicked() {
                             edit = Some(Edit::MarkAnnotation { page: a.page, index: a.index, marked: !marked, author: prefs.author.clone() });
                         }
@@ -393,7 +399,7 @@ fn card(
                 let x = resp.response.rect.left() + 12.0;
                 ui.painter().vline(x, (resp.response.rect.top() - 14.0)..=(resp.response.rect.top() - 2.0), Stroke::new(1.5, t.border));
             }
-            if selected && allowed {
+            if selected && allowed && threads {
                 ui.add_space(8.0);
                 egui::Frame::NONE.inner_margin(egui::Margin { left: 34, right: 0, top: 0, bottom: 0 }).show(ui, |ui| {
                     // The field fills its line and Post sits right-aligned under it: a field sized
@@ -444,7 +450,7 @@ fn card(
         view.comments.reply.clear();
         *nav = Some(Nav::Flash(a.page, a.rect));
     }
-    if click.double_clicked() && allowed {
+    if click.double_clicked() && allowed && changes {
         view.comments.open_editor(a.page, a.index, a.contents.clone().unwrap_or_default());
     }
     let menu_id = ui.id().with(("card-menu", key));
@@ -459,40 +465,44 @@ fn card(
         .layout(Layout::top_down_justified(Align::Min))
         .show(|ui| {
             ui.set_min_width(160.0);
-            crate::comments::attachment_items(ui, view, info, a);
-            if ui.button(tl_ctx!("comment menu", "Edit")).clicked() {
+            crate::comments::attachment_items(ui, view, info, a, gate.profile);
+            if changes && ui.button(tl_ctx!("comment menu", "Edit")).clicked() {
                 view.comments.open_editor(a.page, a.index, a.contents.clone().unwrap_or_default());
                 ui.close();
             }
-            ui.menu_button(tl!("Set status"), |ui| {
-                for s in [ReviewState::None, ReviewState::Accepted, ReviewState::Cancelled, ReviewState::Completed, ReviewState::Rejected] {
-                    if ui.button(tl!(s.name())).clicked() {
-                        edit = Some(Edit::SetAnnotationStatus { page: a.page, index: a.index, state: s, author: prefs.author.clone() });
-                        ui.close();
+            if threads {
+                ui.menu_button(tl!("Set status"), |ui| {
+                    for s in [ReviewState::None, ReviewState::Accepted, ReviewState::Cancelled, ReviewState::Completed, ReviewState::Rejected] {
+                        if ui.button(tl!(s.name())).clicked() {
+                            edit = Some(Edit::SetAnnotationStatus { page: a.page, index: a.index, state: s, author: prefs.author.clone() });
+                            ui.close();
+                        }
                     }
-                }
-            });
-            if ui.button(tl!(if marked { "Remove checkmark" } else { "Mark with checkmark" })).clicked() {
+                });
+            }
+            if changes && ui.button(tl!(if marked { "Remove checkmark" } else { "Mark with checkmark" })).clicked() {
                 edit = Some(Edit::MarkAnnotation { page: a.page, index: a.index, marked: !marked, author: prefs.author.clone() });
                 ui.close();
             }
-            if ui.button(tl!("Copy text")).clicked() {
+            if copies && ui.add_enabled(gate.can_copy, egui::Button::new(tl!("Copy text"))).clicked() {
                 ui.ctx().copy_text(a.contents.clone().unwrap_or_default());
                 ui.close();
             }
-            if ui.button(tl!("Properties…")).clicked() {
-                view.comments.props_request = Some((a.page, a.index));
-                ui.close();
-            }
-            if ui.add_enabled(crate::comments::tool_for(a).is_some(), egui::Button::new(tl!("Make Current Properties Default"))).clicked() {
-                view.comments.default_request = Some((a.page, a.index));
-                ui.close();
-            }
-            ui.separator();
-            if ui.add_enabled(!a.locked, egui::Button::new(tl!("Delete"))).clicked() {
-                view.comments.selected = None;
-                edit = Some(Edit::DeleteAnnotation { page: a.page, index: a.index });
-                ui.close();
+            if changes {
+                if ui.button(tl!("Properties…")).clicked() {
+                    view.comments.props_request = Some((a.page, a.index));
+                    ui.close();
+                }
+                if ui.add_enabled(crate::comments::tool_for(a).is_some(), egui::Button::new(tl!("Make Current Properties Default"))).clicked() {
+                    view.comments.default_request = Some((a.page, a.index));
+                    ui.close();
+                }
+                ui.separator();
+                if ui.add_enabled(!a.locked, egui::Button::new(tl!("Delete"))).clicked() {
+                    view.comments.selected = None;
+                    edit = Some(Edit::DeleteAnnotation { page: a.page, index: a.index });
+                    ui.close();
+                }
             }
         });
     edit
@@ -523,8 +533,8 @@ fn legible(c: Color32, t: &Tokens) -> Color32 {
 
 /// The Comments panel header's filter and sort controls (Acrobat: filter funnel and "…").
 /// The header's "…" (sort, hide all, summary, data exchange) and filter menus; returns a
-/// command to run.
-pub(crate) fn header_controls(ui: &mut egui::Ui, info: &DocInfo, view: &mut DocView, hidden: bool) -> Option<&'static str> {
+/// command to run. Commands the profile refuses are left out.
+pub(crate) fn header_controls(ui: &mut egui::Ui, info: &DocInfo, view: &mut DocView, hidden: bool, profile: &UiProfile) -> Option<&'static str> {
     let mut command = None;
     let cv = &mut view.comments;
     let mut types: Vec<String> = info.annotations.iter().filter(|a| a.in_reply_to.is_none()).map(|a| kind_label(a).to_string()).collect();
@@ -573,13 +583,19 @@ pub(crate) fn header_controls(ui: &mut egui::Ui, info: &DocInfo, view: &mut DocV
                 ui.close();
             }
         }
-        ui.separator();
-        for (id, label) in [
+        let commands: Vec<(&'static str, &str)> = [
             ("comment.hide_all", if hidden { tl!("Show all comments") } else { tl!("Hide all comments") }),
             ("comment.summarize", tl!("Create PDF comment summary…")),
             ("comment.export", tl!("Export all to data file…")),
             ("comment.import", tl!("Import comments…")),
-        ] {
+        ]
+        .into_iter()
+        .filter(|(id, _)| profile.allows_id(id))
+        .collect();
+        if !commands.is_empty() {
+            ui.separator();
+        }
+        for (id, label) in commands {
             if ui.button(tl!(label)).clicked() {
                 command = Some(id);
                 ui.close();
