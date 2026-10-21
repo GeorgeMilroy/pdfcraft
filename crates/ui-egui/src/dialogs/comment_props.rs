@@ -165,6 +165,8 @@ impl PdfCraftApp {
             .filter(|(p, ix)| doc.info.annotations.iter().any(|a| a.page == *p && a.index == *ix && !a.is_reply() && only(a)))
             .filter(|(p, ix)| doc.comment_props(*p, *ix).is_some_and(|c| c.restylable && !c.locked))
             .map(|(page, index)| Edit::StyleAnnotation { page, index, color: Some(color), opacity: None, width: None, endings: None })
+            // Only the comments whose kind the profile allows restyle.
+            .filter(|edit| self.profile.allows_edit_in(edit, &|p, i| self.annotation_feature(id, p, i)))
             .collect();
         match edits.len() {
             0 => {}

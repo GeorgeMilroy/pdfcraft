@@ -440,6 +440,28 @@ pub(crate) fn tab_under<'a>(tabs: &[(&'a str, SignTab)], p: egui::Pos2) -> Optio
     tabs.iter().rev().find(|(_, tab)| tab.rect.contains(p)).map(|(name, _)| *name)
 }
 
+/// What the profile lets the pointer do with fields. A field it refuses is inert: it shows its
+/// value and takes no click, as if it were printed on the page.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct FieldOffers {
+    /// Filling in fields (the formFill feature).
+    pub fill: bool,
+    /// Signing an empty signature field (the digitalSignatures feature).
+    pub sign: bool,
+}
+
+impl FieldOffers {
+    /// Whether the profile offers `f` to the pointer. Push buttons stay: each of their actions is
+    /// gated where it runs.
+    pub(crate) fn offers(self, f: &FormField) -> bool {
+        match f.kind {
+            FormFieldKind::PushButton => true,
+            FormFieldKind::Signature => self.sign,
+            _ => self.fill,
+        }
+    }
+}
+
 /// Whether `w`, a widget of `f`, takes a press: fillable, a push button with an action (a click
 /// or mouse-down one), or an
 /// empty signature field (signed by clicking it, Use a certificate). A radio button of a group can
@@ -455,7 +477,9 @@ fn usable(f: &FormField, w: &FormWidget, allowed: bool) -> bool {
 /// (`tabs`, with the signature field each one signs), which is drawn over every field and so is
 /// on its own field. Over the page's text too: a check box drawn with a glyph, or set on printed
 /// text, is a button, not text to select. The fields are `doc`'s, shown as its page actions and
-/// timers show them ([`pdfcraft_engine::Document::shown_by_scripts`]).
+/// timers show them ([`pdfcraft_engine::Document::shown_by_scripts`]). A field the profile
+/// refuses (`offers`) is not hit.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn hit(
     xf: &PageXform,
     info: &DocInfo,
@@ -463,6 +487,7 @@ pub(crate) fn hit(
     doc: &pdfcraft_engine::Document,
     tabs: &[(&str, SignTab)],
     allowed: bool,
+    offers: FieldOffers,
     p: Pos2,
 ) -> Option<Hit> {
     if !xf.rect.contains(p) {
@@ -472,6 +497,7 @@ pub(crate) fn hit(
         doc.form
             .iter()
             .enumerate()
+            .filter(|(_, f)| offers.offers(f))
             .filter(|(_, f)| only.is_none_or(|name| f.name == name && f.kind == FormFieldKind::Signature))
             .find_map(|(fi, f)| widget_at(xf, info, page, f, doc.shown_by_scripts(&f.name), p).map(|(wi, w)| (fi, f, wi, w)))
     };
@@ -535,13 +561,14 @@ pub(crate) fn page_input(
     cx: PageToolContext<'_>,
     form: &[FormField],
     allowed: bool,
+    offers: FieldOffers,
     press: PagePress,
     released_over: bool,
     view: &mut DocView,
 ) -> bool {
     let PageToolContext { ui, resp, xf, ptr, page, info, .. } = cx;
     let PagePress::Mine(Owner::Field { field, widget: wi }) = press else { return false };
-    let Some((f, w)) = form.get(field).and_then(|f| f.widgets.get(wi).map(|w| (f, w))) else { return false };
+    let Some((f, w)) = form.get(field).filter(|f| offers.offers(f)).and_then(|f| f.widgets.get(wi).map(|w| (f, w))) else { return false };
     let usable = usable(f, w, allowed);
     // The press runs the widget's Mouse Down JavaScript, as in Acrobat (#269).
     if usable && ptr.pressed().is_some() {

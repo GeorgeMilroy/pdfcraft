@@ -75,6 +75,9 @@ pub(super) fn notices(
     ui: &mut egui::Ui,
     t: &Tokens,
 ) -> Option<Notice> {
+    use crate::features::Feature;
+    // A button for what the profile refuses is not drawn.
+    let profile = crate::dialogs::frame_profile(ui.ctx());
     let info = &doc.info;
     let xfa = doc.xfa.as_ref();
     // The file changed on disk while this document has unsaved changes (#431): ask before
@@ -94,7 +97,7 @@ pub(super) fn notices(
                     if icons::button(ui, "x", 22.0, false, tl!("Dismiss")).clicked() {
                         view.disk_changed = false;
                     }
-                    reload = crate::widgets::pill_button(ui, tl!("Reload"), false).clicked();
+                    reload = profile.allows_save() && crate::widgets::pill_button(ui, tl!("Reload"), false).clicked();
                 });
             });
         });
@@ -150,7 +153,7 @@ pub(super) fn notices(
     if let Some((icon, color, template, arg)) = signed {
         let mut open = false;
         notice_bar(ui, t, icon, color, crate::i18n::fmt(tl!(template), &[("by", &arg)]), |ui| {
-            if crate::widgets::pill_button(ui, tl!("Signature panel"), false).clicked() {
+            if profile.shows_panel(crate::RightPanel::Signatures) && crate::widgets::pill_button(ui, tl!("Signature panel"), false).clicked() {
                 open = true;
             }
         });
@@ -238,20 +241,26 @@ pub(super) fn notices(
                 toggled = Some(Notice::FieldHighlights(view.highlight_fields));
             }
         }
-        if scripts_off && crate::widgets::pill_button(ui, tl!("JavaScript Console"), false).clicked() {
+        if scripts_off && profile.allows_id("tools.js_console") && crate::widgets::pill_button(ui, tl!("JavaScript Console"), false).clicked() {
             open_console = true;
         }
-        if secured && crate::widgets::pill_button(ui, tl!("Security settings"), false).clicked() {
+        if secured && profile.allows_id("file.properties") && crate::widgets::pill_button(ui, tl!("Security settings"), false).clicked() {
             open_security = true;
         }
-        if secured && doc.can_unlock() && crate::widgets::pill_button(ui, tl!("Unlock…"), true).clicked() {
+        if secured && doc.can_unlock() && profile.allows_feature(Feature::Security) && crate::widgets::pill_button(ui, tl!("Unlock…"), true).clicked()
+        {
             unlock = true;
         }
         // Only when the bar shows the security message: a form's stopped scripts come first.
         if secured && !scripts_off && crate::widgets::pill_button(ui, tl!("Don't show again"), false).clicked() {
             hide_secured = true;
         }
-        if repaired && !secured && info.fields.is_empty() && crate::widgets::pill_button(ui, tl!("Details"), false).clicked() {
+        if repaired
+            && !secured
+            && info.fields.is_empty()
+            && profile.allows_id("file.properties")
+            && crate::widgets::pill_button(ui, tl!("Details"), false).clicked()
+        {
             open_repairs = true;
         }
     });

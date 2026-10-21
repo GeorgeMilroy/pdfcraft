@@ -279,8 +279,8 @@ fn core_tool_buttons(ui: &mut egui::Ui, app: &mut PdfCraftApp, cell: f32, popup_
         });
     }
     // Edit text & images, while the Edit workspace is open (Acrobat's Edit toolbar)
-    // or the tool is in use.
-    if app.mode == crate::Mode::Edit || app.quick_tool == QuickTool::EditText {
+    // or the tool is in use, unless the profile hides it.
+    if (app.mode == crate::Mode::Edit || app.quick_tool == QuickTool::EditText) && app.profile.allows_id("edit.edit_text") {
         let on = app.quick_tool == QuickTool::EditText;
         if icons::button(ui, "text-cursor-input", cell, on, tl!("Edit text & images")).clicked() {
             if on {
@@ -295,11 +295,13 @@ fn core_tool_buttons(ui: &mut egui::Ui, app: &mut PdfCraftApp, cell: f32, popup_
         QuickTool::Fill(f) => Some(f),
         _ => None,
     };
-    let shown = current_fill.unwrap_or(app.fill_tool);
-    // Fill & Sign ▸ unless the profile hides it.
-    if !app.profile.allows_id(shown.command()) {
+    // The tool in use (or last used), or the first one the profile allows; none hides Fill & Sign.
+    let Some(shown) = Some(current_fill.unwrap_or(app.fill_tool))
+        .filter(|f| app.profile.allows_id(f.command()))
+        .or_else(|| crate::fill_sign::FILL_TOOLS.into_iter().find(|f| app.profile.allows_id(f.command())))
+    else {
         return;
-    }
+    };
     let tip = match shown {
         crate::fill_sign::FillTool::Signature | crate::fill_sign::FillTool::Initials if current_fill.is_none() => {
             let initials = shown == crate::fill_sign::FillTool::Initials;
@@ -351,6 +353,9 @@ fn core_tool_buttons(ui: &mut egui::Ui, app: &mut PdfCraftApp, cell: f32, popup_
                 app.execute(tool.command());
                 ui.close();
             }
+        }
+        if !app.profile.allows_id("sign.fill.signature") && !app.profile.allows_id("sign.fill.initials") {
+            return;
         }
         ui.separator();
         if let Some(command) = crate::fill_sign::signature_entries(ui, app, t) {
