@@ -670,6 +670,9 @@ pub struct PdfCraftApp {
     #[cfg(not(target_arch = "wasm32"))]
     pub(crate) script_pending: Option<script_dialog::Pending>,
     pub doc_js: js_ui::DocJsDraft,
+    /// Enable Acrobat JavaScript as the user set it, while a profile without JavaScript holds
+    /// scripts off in the session (`None` otherwise).
+    js_held: Option<bool>,
     pub a11y: a11y_ui::A11yState,
     pub(crate) tags_state: tags_ui::State,
     /// Rules skipped by hand, for the document they were skipped in.

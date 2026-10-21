@@ -117,6 +117,10 @@ pub(crate) fn body(
     ui.set_width(820.0);
     ui.label(egui::RichText::new(tl!("Print")).font(theme::semibold(18.0)));
     ui.add_space(8.0);
+    // Without Save as PDF the dialog prints: a printer is chosen as soon as there is one.
+    if !save_pdf && d.printer.is_none() {
+        d.printer = super::default_printer(d, &d.printers);
+    }
     let settings = d.settings(sizes.len(), labels);
     let laid = settings.as_ref().ok().map(|s| print::layout(sizes, s));
     // Creep within its field's range can still be too much for a thick booklet.
@@ -699,13 +703,13 @@ pub(crate) fn body(
         let looking = still_looking(d);
         let waiting_paper = d.papers_loading();
         let label = if d.printer.is_some() || looking || !save_pdf { tl!("Print") } else { tl!("Save as PDF") };
-        let destination = d.printer.is_some() || save_pdf;
-        if ui
-            .add_enabled_ui(settings.is_ok() && !sheets.is_empty() && !looking && !waiting_paper && destination, |ui| {
-                widgets::pill_button(ui, label, true)
-            })
-            .inner
-            .clicked()
+        // Nowhere to print to (no printer, and the profile refuses Save as PDF): no button.
+        let destination = d.printer.is_some() || save_pdf || looking;
+        if destination
+            && ui
+                .add_enabled_ui(settings.is_ok() && !sheets.is_empty() && !looking && !waiting_paper, |ui| widgets::pill_button(ui, label, true))
+                .inner
+                .clicked()
         {
             go = true;
         }

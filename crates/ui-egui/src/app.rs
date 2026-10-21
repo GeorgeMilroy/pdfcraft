@@ -259,6 +259,7 @@ impl PdfCraftApp {
             #[cfg(not(target_arch = "wasm32"))]
             script_pending: None,
             doc_js: Default::default(),
+            js_held: None,
             a11y: a11y_ui::A11yState::default(),
             tags_state: Default::default(),
             a11y_skipped: Default::default(),
@@ -622,9 +623,8 @@ impl PdfCraftApp {
             }
         }
         // Whatever set it (the control channel, a host assigning the profile), nothing the
-        // profile refuses stays open or armed.
+        // profile refuses stays open or armed, and what is drawn this frame reads this profile.
         self.enforce_profile();
-        // Drawing code without the app (the page grid, notices, panels) reads it from here.
         crate::dialogs::publish_profile(self, ctx);
         #[cfg(not(target_arch = "wasm32"))]
         {

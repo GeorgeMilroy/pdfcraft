@@ -155,7 +155,7 @@ enum JobNews {
 
 /// The printer the dialog preselects: the one printed to last while it is listed (#2001), else
 /// the system default, else the first.
-fn default_printer(d: &PrintDraft, printers: &[spool::Printer]) -> Option<String> {
+pub(super) fn default_printer(d: &PrintDraft, printers: &[spool::Printer]) -> Option<String> {
     d.last_printer(printers).or_else(|| printers.iter().find(|p| p.default)).or(printers.first()).map(|p| p.name.clone())
 }
 

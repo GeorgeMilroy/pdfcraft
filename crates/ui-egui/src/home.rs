@@ -109,7 +109,7 @@ pub fn show(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
                             });
                         });
                         ui.add_space(8.0);
-                        if let Some(cmd) = widgets::community_links(ui) {
+                        if let Some(cmd) = widgets::community_links(ui, &|id| app.profile.allows_id(id)) {
                             app.execute(cmd);
                         }
                     });
@@ -212,7 +212,8 @@ pub fn show(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
             }
 
             // Recent files are opened from Home, so they go with opening files.
-            let recent = app.profile.allows_id("file.open_recent");
+            // A recent file opens like any other: it needs File ▸ Open too.
+            let recent = app.profile.allows_id("file.open_recent") && app.profile.allows_id("file.open");
             let mut clear = false;
             // Preferences can turn the list off (#5572).
             if recent && app.recent_limit > 0 {
