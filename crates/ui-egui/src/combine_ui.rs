@@ -780,10 +780,10 @@ pub(crate) fn page(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
             }
             group(ui, &t, edge, 2.0 * 30.0 + 6.0);
             let (undo, redo) = (!app.combine_tab.undo.is_empty(), !app.combine_tab.redo.is_empty());
-            if tool(ui, undo, "undo-2", tl!("Undo"), tl!("Nothing to undo")).clicked() {
+            if app.profile.allows_id("edit.undo") && tool(ui, undo, "undo-2", tl!("Undo"), tl!("Nothing to undo")).clicked() {
                 app.execute("edit.undo");
             }
-            if tool(ui, redo, "redo-2", tl!("Redo"), tl!("Nothing to redo")).clicked() {
+            if app.profile.allows_id("edit.redo") && tool(ui, redo, "redo-2", tl!("Redo"), tl!("Nothing to redo")).clicked() {
                 app.execute("edit.redo");
             }
             group(ui, &t, edge, 2.0 * 30.0 + 6.0);
@@ -1895,6 +1895,9 @@ fn civil_from_days(days: u64) -> (i64, u32, u32) {
 impl PdfCraftApp {
     /// Show the Combine files tab (File ▸ Combine files…), opening it if needed.
     pub fn open_combine_tab(&mut self) {
+        if !self.profile.allows_id("page.combine") {
+            return;
+        }
         self.combine_tab.open = true;
         self.combine_tab.focused = true;
         self.active = None;
@@ -1902,7 +1905,7 @@ impl PdfCraftApp {
 
     /// Whether the Combine files tab is the one showing.
     pub fn combine_showing(&self) -> bool {
-        self.active.is_none() && self.combine_tab.open && self.combine_tab.focused
+        self.active.is_none() && self.combine_tab.open && self.combine_tab.focused && self.profile.allows_id("page.combine")
     }
 
     /// The selected rows, top to bottom (tests and automation).
@@ -2408,6 +2411,9 @@ impl PdfCraftApp {
 
     /// Add files to the Combine files list, with what can be known about them up front.
     pub(crate) fn stage_combine_with(&mut self, files: Vec<Incoming>) {
+        if !self.profile.allows_id("page.combine") {
+            return;
+        }
         let mut added = Vec::new();
         for Incoming { name, bytes, modified, note, open_doc } in files {
             // Images and text files become PDFs as they join the list (#569): from then on they
