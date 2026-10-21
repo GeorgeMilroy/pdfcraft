@@ -311,7 +311,7 @@ pub fn tab_strip(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
                         ThemePreference::Light => 1,
                         ThemePreference::Dark => 2,
                     };
-                    let next = (1..=cycle.len()).filter_map(|k| cycle.get((at + k) % cycle.len())).copied().find(|id| app.profile.allows_id(id));
+                    let next = cycle.iter().cycle().skip(at).skip(1).take(cycle.len()).copied().find(|id| app.profile.allows_id(id));
                     if let Some(next) = next {
                         let response = icons::button(ui, icon, button, false, &tip);
                         // A click cycles System, Light, Dark; a right-click opens the menu.

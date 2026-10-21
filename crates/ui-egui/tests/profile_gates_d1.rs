@@ -211,3 +211,76 @@ fn delete_leaves_a_locked_comment_with_the_default_profile_too() {
     h.run_steps(3);
     assert_eq!(comments(&h), 1, "a locked comment stays");
 }
+
+/// One 200×300 page with a stroked path from (40, 40) to (160, 40) to (160, 200).
+fn drawing() -> Vec<u8> {
+    let content = "40 40 m 160 40 l 160 200 l S";
+    let objs = [
+        "<< /Type /Catalog /Pages 2 0 R >>".to_string(),
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 /MediaBox [0 0 200 300] >>".to_string(),
+        "<< /Type /Page /Parent 2 0 R /Contents 4 0 R >>".to_string(),
+        format!("<< /Length {} >>\nstream\n{content}\nendstream", content.len()),
+    ];
+    let mut out = b"%PDF-1.7\n".to_vec();
+    let mut offsets = Vec::new();
+    for (i, o) in objs.iter().enumerate() {
+        offsets.push(out.len());
+        out.extend_from_slice(format!("{} 0 obj\n{o}\nendobj\n", i + 1).as_bytes());
+    }
+    let xref = out.len();
+    out.extend_from_slice(format!("xref\n0 {}\n0000000000 65535 f \n", objs.len() + 1).as_bytes());
+    for o in offsets {
+        out.extend_from_slice(format!("{o:010} 00000 n \n").as_bytes());
+    }
+    out.extend_from_slice(format!("trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n", objs.len() + 1).as_bytes());
+    out
+}
+
+#[test]
+fn measuring_snaps_to_the_drawing_only_while_snapping_is_allowed() {
+    let _gpu = gpu();
+    // The first point of a distance measured just off the path's corner (40, 40).
+    let first_point = |profile: UiProfile| {
+        let mut h = Harness::builder().with_size(egui::vec2(1400.0, 900.0)).build_eframe(move |_cc| {
+            let mut app = PdfCraftApp::new();
+            app.set_option("language", "en").unwrap();
+            app.open_bytes("drawing.pdf", None, drawing()).unwrap();
+            app.set_option("left", "closed").unwrap();
+            app.set_option("panel", "none").unwrap();
+            app.set_option("zoom", "100").unwrap();
+            app.set_profile(profile);
+            app.set_option("quick", "measure-distance").unwrap();
+            app
+        });
+        h.run_steps(6);
+        let r = h.state().views[0].page_screen_rect(0).expect("page 1 on screen");
+        let at = egui::pos2(r.min.x + r.width() * 41.0 / 200.0, r.min.y + r.height() * (1.0 - 41.0 / 300.0));
+        h.hover_at(at);
+        h.run_steps(2);
+        h.drag_at(at);
+        h.run_steps(1);
+        h.drop_at(at);
+        h.run_steps(3);
+        let p = *h.state().views[0].measure.points.first().expect("a point measured");
+        ((p[0] - 40.0).powi(2) + (p[1] - 40.0).powi(2)).sqrt()
+    };
+    assert!(first_point(UiProfile::default()) < 1e-6, "snapped to the corner");
+    assert!(first_point(hiding(&["measure.snap"])) > 0.5, "where the pointer is");
+}
+
+#[test]
+fn changing_the_saved_signature_follows_the_legacy_flags() {
+    let commands = ["sign.fill.signature.change", "sign.fill.signature.remove", "sign.fill.initials.change", "sign.fill.initials.remove"];
+    let read_only = UiProfile { read_only: true, ..UiProfile::default() };
+    for id in commands {
+        assert!(UiProfile::default().allows_id(id), "{id}");
+        assert!(UiProfile { comments_only: true, ..UiProfile::default() }.allows_id(id), "{id}: Fill & Sign is a comment feature");
+        assert!(!read_only.allows_id(id), "{id} in a view-only profile");
+    }
+    // The Signature dialog has nothing left to offer in a view-only profile.
+    let _gpu = gpu();
+    let mut h = harness(UiProfile::default(), |_| {});
+    h.state_mut().dialog = Some(pdfcraft_ui_egui::Dialog::Signature);
+    h.state_mut().set_profile(read_only);
+    assert_eq!(h.state().dialog, None);
+}
