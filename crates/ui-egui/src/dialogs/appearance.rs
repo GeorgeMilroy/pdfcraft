@@ -135,19 +135,37 @@ pub fn preferences_section(ui: &mut egui::Ui, app: &mut PdfCraftApp, t: &Tokens)
     preferences_section_with_context(ui, app, t, &mut ctx);
 }
 
-/// The Appearance section of Preferences with live search highlighting and scrolling context.
+/// The Appearance section of Preferences with live search highlighting and scrolling context: the
+/// choices whose theme command the profile allows.
 pub(crate) fn preferences_section_with_context(
     ui: &mut egui::Ui,
     app: &mut PdfCraftApp,
     t: &Tokens,
     ctx: &mut crate::dialogs::preferences::PrefSearchContext,
 ) {
+    let allowed = |app: &PdfCraftApp, preference| app.profile.allows_id(mode_command(preference));
+    if [ThemePreference::System, ThemePreference::Light, ThemePreference::Dark].into_iter().any(|p| allowed(app, p)) {
+        theme_choices(ui, app, t, ctx, &allowed);
+    }
+    ui.add_space(4.0);
+    // Acrobat's "Highlight existing fields": shared with the toggle in the form bar.
+    ctx.checkbox(ui, &mut app.view_defaults.highlight_fields, tl!("Highlight fields"), t);
+}
+
+/// The appearance mode and the light and dark theme cards the profile allows.
+fn theme_choices(
+    ui: &mut egui::Ui,
+    app: &mut PdfCraftApp,
+    t: &Tokens,
+    ctx: &mut crate::dialogs::preferences::PrefSearchContext,
+    allowed: &dyn Fn(&PdfCraftApp, ThemePreference) -> bool,
+) {
     ctx.label(ui, tl_ctx!("theme", "Appearance"), theme::semibold(13.0), t.text);
     ui.horizontal(|ui| {
         let label = ctx.label(ui, tl!("Appearance mode"), theme::regular(13.0), t.text);
         let combo = craft_ui::ComboBox::from_id_salt("appearance-mode").selected_text(tl!(mode_label(app.theme_preference))).show_ui(ui, |ui| {
             for preference in [ThemePreference::System, ThemePreference::Light, ThemePreference::Dark] {
-                if ui.selectable_label(app.theme_preference == preference, tl!(mode_label(preference))).clicked() {
+                if allowed(app, preference) && ui.selectable_label(app.theme_preference == preference, tl!(mode_label(preference))).clicked() {
                     app.execute(mode_command(preference));
                     ui.close();
                 }
@@ -164,23 +182,25 @@ pub(crate) fn preferences_section_with_context(
     let dark_matches = crate::dialogs::preferences::find_match_ranges(dark_title, ctx.query).len();
     ctx.total_matches += light_matches + dark_matches;
 
+    let (show_light, show_dark) = (allowed(app, ThemePreference::Light), allowed(app, ThemePreference::Dark));
     ui.columns(2, |cols| {
         let [light, dark] = cols else { return };
-        let (light_clicked, light_resp) = card(light, t, light_title, light_active, LIGHT_THEMES, ctx.query);
-        if light_clicked {
-            app.execute(mode_command(ThemePreference::Light));
+        if show_light {
+            let (light_clicked, light_resp) = card(light, t, light_title, light_active, LIGHT_THEMES, ctx.query);
+            if light_clicked {
+                app.execute(mode_command(ThemePreference::Light));
+            }
+            ctx.scroll_if_first_match(&light_resp, light_matches);
         }
-        ctx.scroll_if_first_match(&light_resp, light_matches);
-
+        if !show_dark {
+            return;
+        }
         let (dark_clicked, dark_resp) = card(dark, t, dark_title, !light_active, DARK_THEMES, ctx.query);
         if dark_clicked {
             app.execute(mode_command(ThemePreference::Dark));
         }
         ctx.scroll_if_first_match(&dark_resp, dark_matches);
     });
-    ui.add_space(4.0);
-    // Acrobat's "Highlight existing fields": shared with the toggle in the form bar.
-    ctx.checkbox(ui, &mut app.view_defaults.highlight_fields, tl!("Highlight fields"), t);
 }
 
 #[cfg(test)]

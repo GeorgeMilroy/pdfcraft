@@ -5,6 +5,7 @@ use egui::{Align, Layout};
 use pdfcraft_engine::js::{JsOutput, Message, MessageIcon, Panel, Request};
 use pdfcraft_engine::{DocId, Edit};
 
+use crate::features::Feature;
 use crate::theme::{self, Tokens};
 use crate::{PdfCraftApp, widgets};
 
@@ -278,8 +279,12 @@ impl PdfCraftApp {
     pub fn run_button_script(&mut self, id: DocId, field: &str, script: &str) {
         self.run_button_script_target(id, field, None, script);
     }
-    /// Run the action of the exact clicked button, preserving legacy name-only entry points.
+    /// Run the action of the exact clicked button, preserving legacy name-only entry points, when
+    /// the profile allows scripts.
     pub fn run_button_script_target(&mut self, id: DocId, field: &str, identity: Option<u64>, script: &str) {
+        if !self.profile.allows_feature(Feature::JavaScript) {
+            return;
+        }
         // A script reads the fields: include what's still being typed in one (#166).
         if !self.commit_form_typing() {
             return;
@@ -391,6 +396,9 @@ impl PdfCraftApp {
 
     /// The console's Run: evaluate the input in the active document.
     pub fn run_console(&mut self) {
+        if !self.profile.allows_feature(Feature::JavaScript) {
+            return;
+        }
         let Some((i, id)) = self.active_ids() else { return };
         let script = self.js_console.input.clone();
         if script.trim().is_empty() {

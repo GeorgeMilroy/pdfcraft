@@ -198,6 +198,10 @@ pub(crate) fn panel(
     {
         page = Some(p);
     }
+    // Without accessibility editing the properties only show, and the buttons that change tags
+    // are left out.
+    let fix = crate::dialogs::frame_profile(ui.ctx()).allows_feature(crate::features::Feature::Accessibility);
+    let can_edit = can_edit && fix;
     ui.add_enabled_ui(can_edit, |ui| {
         field(ui, tl!("Tag type"), &mut state.draft.kind, false);
         field(ui, tl!("Title"), &mut state.draft.title, false);
@@ -211,21 +215,26 @@ pub(crate) fn panel(
     let position = siblings.iter().position(|sibling| sibling.object == tag.object);
     let before = position.and_then(|position| position.checked_sub(1)).map(|position| siblings[position]);
     let after = position.and_then(|position| siblings.get(position + 1)).copied();
-    ui.horizontal(|ui| {
-        save = ui.add_enabled(can_edit && !state.draft.kind.is_empty() && edit.is_some(), egui::Button::new(tl!("Save tag properties"))).clicked();
-        if ui.add_enabled(dirty, egui::Button::new(tl!("Revert changes"))).clicked() {
-            state.draft = Draft::from_tag(tag);
-        }
-    });
+    if fix {
+        ui.horizontal(|ui| {
+            save =
+                ui.add_enabled(can_edit && !state.draft.kind.is_empty() && edit.is_some(), egui::Button::new(tl!("Save tag properties"))).clicked();
+            if ui.add_enabled(dirty, egui::Button::new(tl!("Revert changes"))).clicked() {
+                state.draft = Draft::from_tag(tag);
+            }
+        });
+    }
     let (mut earlier, mut later, mut artifact) = (false, false, false);
-    ui.horizontal(|ui| {
-        earlier = ui.add_enabled(can_edit && !dirty && before.is_some(), egui::Button::new(tl!("Move tag earlier"))).clicked();
-        later = ui.add_enabled(can_edit && !dirty && after.is_some(), egui::Button::new(tl!("Move tag later"))).clicked();
-        artifact = ui
-            .add_enabled(can_edit && !dirty, egui::Button::new(tl!("Mark as artifact")))
-            .on_hover_text(tl!("Remove this leaf tag from reading order and mark its direct content as an artifact"))
-            .clicked();
-    });
+    if fix {
+        ui.horizontal(|ui| {
+            earlier = ui.add_enabled(can_edit && !dirty && before.is_some(), egui::Button::new(tl!("Move tag earlier"))).clicked();
+            later = ui.add_enabled(can_edit && !dirty && after.is_some(), egui::Button::new(tl!("Move tag later"))).clicked();
+            artifact = ui
+                .add_enabled(can_edit && !dirty, egui::Button::new(tl!("Mark as artifact")))
+                .on_hover_text(tl!("Remove this leaf tag from reading order and mark its direct content as an artifact"))
+                .clicked();
+        });
+    }
     ui.separator();
     for item in content {
         let page_label = item.page.map(|p| crate::i18n::fmt(tl!("Go to page {p}"), &[("p", &(p + 1).to_string())]));
