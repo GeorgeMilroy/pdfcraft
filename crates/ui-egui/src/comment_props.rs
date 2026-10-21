@@ -50,6 +50,9 @@ fn ending_label(ending: LineEnding) -> &'static str {
 impl PdfCraftApp {
     /// Attach file: ask for a file (or take `attach_override`) and attach it at `at`.
     pub fn attach_file_comment(&mut self, page: usize, at: [f64; 2]) {
+        if !self.profile.allows_id("comment.attach") {
+            return;
+        }
         match self.attach_override.take() {
             Some((file, data)) => self.add_attachment_comment(page, at, file, data),
             #[cfg(not(target_arch = "wasm32"))]
@@ -90,6 +93,9 @@ impl PdfCraftApp {
     /// Make Current Properties Default: new comments of this kind take this one's colour,
     /// opacity and line width.
     pub fn make_comment_default(&mut self, page: usize, index: usize) {
+        if !self.may_change_comment(page, index) {
+            return;
+        }
         let Some(p) = self.active_ids().and_then(|(_, id)| self.session.get(id)).and_then(|doc| doc.comment_props(page, index)) else { return };
         self.make_props_default(page, index, &p);
     }
@@ -119,10 +125,20 @@ impl PdfCraftApp {
 
     /// Open Comment Properties for the comment at `(page, index)` of the active document.
     pub fn open_comment_props(&mut self, page: usize, index: usize) {
+        if !self.may_change_comment(page, index) {
+            return;
+        }
         let Some((_, id)) = self.active_ids() else { return };
         let Some(p) = self.session.get(id).and_then(|d| d.comment_props(page, index)) else { return };
         self.comment_props = Some(PropsDraft { page, index, tab: PropsTab::Appearance, original: p.clone(), edited: p, make_default: false });
         self.dialog = Some(crate::Dialog::CommentProps);
+    }
+
+    /// Whether the profile lets the comment at `(page, index)` of the active document change:
+    /// the feature of its kind is on.
+    fn may_change_comment(&self, page: usize, index: usize) -> bool {
+        let Some((_, id)) = self.active_ids() else { return false };
+        self.annotation_feature(id, page, index).is_some_and(|f| self.profile.allows_feature(f))
     }
 }
 

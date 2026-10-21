@@ -721,7 +721,7 @@ pub fn right_panel(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
         let tags_state = &mut app.tags_state;
         let compare = &app.compare;
         let profile = &app.profile;
-        let comment_allowed = doc.allows_annotation();
+        let comment_gate = crate::comments::MenuGate { profile, allowed: doc.allows_annotation(), can_copy: doc.allows_copying() };
         // A dialog or the palette owns the keyboard: the panel leaves Escape to it.
         let modal = app.dialog.is_some() || app.palette_open;
         egui::Frame::NONE
@@ -758,7 +758,7 @@ pub fn right_panel(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
                         }
                         // Right to left: close, "…", filter, search (Acrobat's order left to right).
                         if panel == RightPanel::Comments {
-                            panel_command = crate::comments_panel::header_controls(ui, info, view, doc.comments_hidden());
+                            panel_command = crate::comments_panel::header_controls(ui, info, view, doc.comments_hidden(), profile);
                         }
                         if panel == RightPanel::Comments
                             && icons::button(ui, "search", 26.0, view.comments.search.is_some(), tl!("Search comments")).clicked()
@@ -841,7 +841,7 @@ pub fn right_panel(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
                 }
                 egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| match panel {
                     RightPanel::Comments => {
-                        if let Some(e) = crate::comments_panel::show(ui, &t, info, view, prefs, comment_allowed, &mut nav) {
+                        if let Some(e) = crate::comments_panel::show(ui, &t, info, view, prefs, comment_gate, &mut nav) {
                             panel_edit = Some(e);
                         }
                     }
@@ -944,10 +944,12 @@ pub fn right_panel(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
                                         ui.add(egui::Label::new(egui::RichText::new(meta).color(t.text_faint).small()).truncate());
                                     });
                                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                                        if icons::button(ui, "file-down", 28.0, false, tl!("Save attachment…")).clicked() {
+                                        let (save, open) = crate::comments::attachment_offers(profile);
+                                        if save && icons::button(ui, "file-down", 28.0, false, tl!("Save attachment…")).clicked() {
                                             attachment_action = Some((ai, false));
                                         }
-                                        if a.name.to_lowercase().ends_with(".pdf")
+                                        if open
+                                            && a.name.to_lowercase().ends_with(".pdf")
                                             && icons::button(ui, "file-input", 28.0, false, tl!("Open in a new tab")).clicked()
                                         {
                                             attachment_action = Some((ai, true));
