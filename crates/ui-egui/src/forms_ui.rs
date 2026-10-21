@@ -97,6 +97,16 @@ fn open_focus(f: &FormField, widget: usize) -> Focus {
     }
 }
 
+/// What the profile lets the pointer do with fields. A field it refuses is inert: it shows its
+/// value and takes no click, as if it were printed on the page.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct FieldOffers {
+    /// Filling in fields (the formFill feature).
+    pub fill: bool,
+    /// Signing an empty signature field (the digitalSignatures feature).
+    pub sign: bool,
+}
+
 /// Where the pointer is relative to one page's form widgets.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum FieldPointer {
@@ -120,6 +130,7 @@ pub(crate) fn page_input(
     info: &DocInfo,
     form: &[FormField],
     allowed: bool,
+    offers: FieldOffers,
     view: &mut DocView,
 ) -> FieldPointer {
     let pointer = ui.input(|i| i.pointer.hover_pos());
@@ -132,6 +143,15 @@ pub(crate) fn page_input(
             .map(|(i, w)| (f, i, w))
     });
     let Some((f, wi, w)) = hit else { return FieldPointer::Away };
+    // Push buttons stay: each of their actions is gated where it runs.
+    let offered = match f.kind {
+        FormFieldKind::PushButton => true,
+        FormFieldKind::Signature => offers.sign,
+        _ => offers.fill,
+    };
+    if !offered {
+        return FieldPointer::Away;
+    }
     // Empty signature fields are signed by clicking them (Use a certificate); push buttons run
     // their action.
     let pressable = f.kind == FormFieldKind::PushButton && !f.read_only() && f.button.is_some();
