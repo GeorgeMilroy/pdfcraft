@@ -97,6 +97,8 @@ impl PdfCraftApp {
         match choice {
             None => {} // cancelled: nothing closes
             Some(false) => self.close_and_continue(ctx, index, req),
+            // Without saving in the profile, Save closes nothing.
+            Some(true) if !self.profile.allows_save() => self.notify(tl!("Not allowed")),
             Some(true) => {
                 let Some(id) = self.views.get(index).map(|v| v.id) else { return };
                 // Bring the document forward: what's typed in its form is committed and saved

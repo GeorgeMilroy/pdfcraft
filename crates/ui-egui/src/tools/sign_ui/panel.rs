@@ -73,7 +73,7 @@ pub(crate) fn panel(ui: &mut egui::Ui, t: &Tokens, sigs: &[SignatureInfo], expan
     // Signing, trusting and exporting are digital signatures; viewing a version opens a tab.
     let profile = crate::dialogs::frame_profile(ui.ctx());
     let manage = profile.allows_feature(crate::features::Feature::DigitalSignatures);
-    let open_files = profile.allows_feature(crate::features::Feature::App);
+    let open_files = super::opens_tabs(&profile);
     ui.horizontal(|ui| {
         if profile.allows_id("sign.validate") && widgets::pill_button(ui, tl!("Validate all"), false).clicked() {
             action = Some(PanelAction::Validate);

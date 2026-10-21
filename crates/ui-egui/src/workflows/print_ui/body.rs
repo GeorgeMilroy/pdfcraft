@@ -93,6 +93,10 @@ pub(crate) fn body(
     ui.set_width(820.0);
     ui.label(egui::RichText::new(tl!("Print")).font(theme::semibold(18.0)));
     ui.add_space(8.0);
+    // Without Save as PDF the dialog prints: a printer is chosen as soon as there is one.
+    if !save_pdf && d.printer.is_none() {
+        d.printer = super::default_printer(&d.printers);
+    }
     let settings = d.settings(sizes.len(), labels);
     let sheets = settings.as_ref().ok().and_then(|s| print::layout(sizes, s).ok()).unwrap_or_default();
     d.sheet = d.sheet.min(sheets.len().saturating_sub(1));
@@ -539,11 +543,10 @@ pub(crate) fn body(
     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
         let looking = still_looking(d);
         let label = if d.printer.is_some() || looking || !save_pdf { tl!("Print") } else { tl!("Save as PDF") };
-        let destination = d.printer.is_some() || save_pdf;
-        if ui
-            .add_enabled_ui(settings.is_ok() && !sheets.is_empty() && !looking && destination, |ui| widgets::pill_button(ui, label, true))
-            .inner
-            .clicked()
+        // Nowhere to print to (no printer, and the profile refuses Save as PDF): no button.
+        let destination = d.printer.is_some() || save_pdf || looking;
+        if destination
+            && ui.add_enabled_ui(settings.is_ok() && !sheets.is_empty() && !looking, |ui| widgets::pill_button(ui, label, true)).inner.clicked()
         {
             go = true;
         }

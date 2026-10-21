@@ -313,12 +313,16 @@ pub fn tab_strip(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
                         ThemePreference::Dark => ("moon", tl!("Dark gray")),
                     };
                     let tip = format!("{}: {label}", tl!("Display theme"));
-                    let next = match app.theme_preference {
-                        ThemePreference::System => "view.theme.light",
-                        ThemePreference::Light => "view.theme.dark",
-                        ThemePreference::Dark => "view.theme.system",
+                    // The next theme in the cycle System, Light, Dark that the profile allows; the
+                    // button shows while any is.
+                    let cycle = ["view.theme.system", "view.theme.light", "view.theme.dark"];
+                    let at = match app.theme_preference {
+                        ThemePreference::System => 0,
+                        ThemePreference::Light => 1,
+                        ThemePreference::Dark => 2,
                     };
-                    if app.profile.allows_id(next) {
+                    let next = (1..=cycle.len()).filter_map(|k| cycle.get((at + k) % cycle.len())).copied().find(|id| app.profile.allows_id(id));
+                    if let Some(next) = next {
                         let response = icons::button(ui, icon, button, false, &tip);
                         // A click cycles System, Light, Dark; a right-click opens the menu.
                         if response.clicked() {

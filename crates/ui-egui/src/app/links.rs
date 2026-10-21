@@ -94,8 +94,12 @@ impl PdfCraftApp {
     /// A document asks to open `url` (a link, a button's URI action or `app.launchURL`). Web and
     /// email addresses wait for the user to allow them; anything else is refused with a notice
     /// (#90, #91). While one request is waiting, further ones are dropped, so a script can't
-    /// queue up a stream of dialogs.
+    /// queue up a stream of dialogs. A profile that turns such links off refuses them all.
     pub fn request_document_url(&mut self, url: &str, origin: LinkOrigin) {
+        if self.profile.external_links == Some(false) {
+            self.notify(tl!("Not allowed"));
+            return;
+        }
         match pdfcraft_engine::links::document_url(url) {
             Ok(url) => {
                 if self.pending_link.is_none() && self.pending_remote_link.is_none() {

@@ -85,8 +85,21 @@ impl PdfCraftApp {
         if self.form_preview && !self.profile.allows_feature(features::Feature::FormDesign) {
             self.form_preview = false;
         }
-        if self.dialog.is_some_and(|d| d.command().is_some_and(|id| !self.profile.allows_id(id))) {
+        if self.dialog.is_some_and(|d| !self.allows_dialog(d)) {
             self.dialog = None;
+        }
+        if !self.allows_mode(self.mode) {
+            self.switch_mode(Mode::AllTools, false);
+        }
+        // Without JavaScript, documents' scripts (open actions, calculations) don't run at all;
+        // the user's preference comes back with the feature.
+        if !self.profile.allows_feature(features::Feature::JavaScript) {
+            if self.js_held.is_none() {
+                self.js_held = Some(self.session.javascript());
+                self.session.set_javascript(false);
+            }
+        } else if let Some(on) = self.js_held.take() {
+            self.session.set_javascript(on);
         }
         let (find, organize) = (self.profile.allows_id("edit.find"), self.shows_command("page.organize"));
         for view in &mut self.views {
@@ -120,12 +133,23 @@ impl PdfCraftApp {
             }
     }
 
+    /// Whether the profile allows one of the commands that open dialog `d` ([`Dialog::commands`]).
+    pub(crate) fn allows_dialog(&self, d: Dialog) -> bool {
+        let ids = d.commands();
+        ids.is_empty() || ids.iter().any(|id| self.profile.allows_id(id))
+    }
+
+    /// Whether the workspace shows: one with a tool group of its own (Edit, Convert, E-Sign)
+    /// needs that group shown.
+    pub(crate) fn allows_mode(&self, mode: Mode) -> bool {
+        mode.tool_group().is_none_or(|id| self.shows_tool_group(id))
+    }
+
     /// Whether the tool group `id` shows: [`profile::UiProfile::shows_group`], and the feature the
     /// group serves is on (a group can keep entries that only copy, such as Extract pages, after
-    /// its feature is gone).
+    /// its feature is gone): the same test as the All tools list ([`panels::group_shown`]).
     pub(crate) fn shows_tool_group(&self, id: &str) -> bool {
-        pdfcraft_engine::catalog::group(id).is_some_and(|g| self.profile.shows_group(g))
-            && features::group_feature(id).is_none_or(|f| self.profile.allows_feature(f))
+        pdfcraft_engine::catalog::group(id).is_some_and(|g| panels::group_shown(&self.profile, g))
     }
 
     /// Enter a tool from the catalogue, Home, palette or control channel. Organize is a
@@ -153,6 +177,8 @@ impl PdfCraftApp {
     /// Select the workspace and its matching tool panel, just like the mode bar. The tool goes
     /// with the workspace as [`Self::enter_mode`] sets it.
     pub(crate) fn select_mode(&mut self, mode: Mode) {
+        // A workspace whose tool group the profile hides is All tools.
+        let mode = if self.allows_mode(mode) { mode } else { Mode::AllTools };
         self.enter_mode(mode);
         self.reveal_tools();
         if let Some(view) = self.active.and_then(|i| self.views.get_mut(i)) {
@@ -219,6 +245,7 @@ impl PdfCraftApp {
     /// that panel. The rail stays in Read mode, and its buttons open panels there too (#932).
     /// Read mode hides the quick toolbar, so entering it also puts the current tool down.
     pub(crate) fn switch_mode(&mut self, mode: Mode, select_tools: bool) {
+        let mode = if self.allows_mode(mode) { mode } else { Mode::AllTools };
         let was_read = self.mode == Mode::Read;
         if select_tools {
             self.select_mode(mode);

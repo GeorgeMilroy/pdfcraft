@@ -65,6 +65,12 @@ impl PdfCraftApp {
         if out.is_empty() {
             return;
         }
+        // Without JavaScript in the profile, nothing a script asked for happens (printing, links,
+        // saving, navigation, alerts); only what it printed is kept, in the console.
+        if !self.profile.allows_feature(Feature::JavaScript) {
+            self.js_console.log.extend(out.console);
+            return;
+        }
         self.js_console.log.extend(out.console.iter().cloned());
         for e in &out.errors {
             self.js_console.log.push(format!("Error: {e}"));
