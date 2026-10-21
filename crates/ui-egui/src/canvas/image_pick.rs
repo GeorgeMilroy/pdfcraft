@@ -157,8 +157,13 @@ fn write_clipboard_file(dir: &std::path::Path, name: &str, bytes: &[u8]) -> Resu
 
 impl PdfCraftApp {
     /// ⌘C / Ctrl+C copies the selected picture in its original format; Escape deselects it.
+    /// Nothing is picked or copied when the profile refuses copying.
     pub(crate) fn image_pick_keys(&mut self, i: usize, ctx: &egui::Context) {
         let Some(picked) = self.views.get(i).and_then(|v| v.picked_image) else { return };
+        if !self.profile.allows_id("edit.copy") {
+            self.views[i].picked_image = None;
+            return;
+        }
         if ctx.egui_wants_keyboard_input() {
             return;
         }
@@ -183,6 +188,9 @@ impl PdfCraftApp {
     /// Copy Image in Original Format: image `index` on `page` as a file on the clipboard (JPEG
     /// as stored in the PDF, otherwise PNG).
     pub(crate) fn copy_page_image_file(&mut self, page: usize, index: usize) {
+        if !self.profile.allows_id("edit.copy") {
+            return;
+        }
         // A newer copy wins over a whole-document copy still reading its pages.
         self.document_copy = None;
         let Some((_, id)) = self.active_ids() else { return };

@@ -872,6 +872,44 @@ struct PageEnv<'a> {
     y_shift: f32,
     fill_text_size: f64,
     today: (i64, u32, u32),
+    offers: Offers,
+}
+
+/// What the profile ([`crate::profile::UiProfile`]) offers on the page this frame: what it refuses
+/// is not drawn, and does nothing.
+#[derive(Clone, Copy)]
+struct Offers {
+    copy: bool,
+    column: bool,
+    link: bool,
+    remove_links: bool,
+    field_props: bool,
+    /// The Fill & Sign tool in use, if it is one.
+    fill_tool: bool,
+    find: bool,
+    fields: crate::forms_ui::FieldOffers,
+}
+
+impl Offers {
+    fn of(profile: &crate::profile::UiProfile, tool: QuickTool) -> Self {
+        use crate::features::Feature;
+        Self {
+            copy: profile.allows_id("edit.copy"),
+            column: profile.allows_id("edit.column_select"),
+            link: profile.allows_id("edit.link"),
+            remove_links: profile.allows_id("edit.remove_links"),
+            field_props: profile.allows_id("form.field.properties"),
+            fill_tool: match tool {
+                QuickTool::Fill(ft) => profile.allows_id(ft.command()),
+                _ => true,
+            },
+            find: profile.allows_id("edit.find"),
+            fields: crate::forms_ui::FieldOffers {
+                fill: profile.allows_feature(Feature::FormFill),
+                sign: profile.allows_feature(Feature::DigitalSignatures),
+            },
+        }
+    }
 }
 
 /// What the page-scroll closure produces for the rest of the frame.
@@ -1114,6 +1152,7 @@ fn page_tool_input(ui: &mut egui::Ui, view: &mut DocView, frame: &mut PageFrame<
         tool,
         units,
         fill_text_size,
+        offers,
         ..
     } = frame.env;
     let PageSlot { i, xf, .. } = *slot;
@@ -1173,6 +1212,7 @@ fn page_tool_input(ui: &mut egui::Ui, view: &mut DocView, frame: &mut PageFrame<
     // Over a mark already placed, the Fill & Sign tool picks it up (comments, below).
     if let QuickTool::Fill(ft) = tool
         && allowed
+        && offers.fill_tool
         && !comments::fill_grabs(&pcx, view)
     {
         match crate::fill_sign::page_input(
@@ -1230,7 +1270,7 @@ fn page_tool_input(ui: &mut egui::Ui, view: &mut DocView, frame: &mut PageFrame<
         tool == QuickTool::Select
             && !(editing_content && can_modify && crate::content_ui::select_grabs(&xf, ptr, i, info, added, view))
             && !comments::select_grabs(&pcx, view)
-            && crate::forms_ui::page_input(cx, form, can_fill, view)
+            && crate::forms_ui::page_input(cx, form, can_fill, offers.fields, view)
     };
     // Redact draws boxes off text; so does Highlight (an area highlight, as in Acrobat).
     let area_tool = tool == QuickTool::Redact && can_modify || tool == QuickTool::Comment(comments::CommentTool::Highlight) && allowed;
@@ -1312,10 +1352,11 @@ fn page_tool_input(ui: &mut egui::Ui, view: &mut DocView, frame: &mut PageFrame<
         let image_used = crate::edit_text_ui::image_input(&image_cx, &images, view, &mut frame.out.image_action);
         !others_own_pointer && (text_used || image_used)
     };
-    let on_link = tool == QuickTool::Link && can_modify && crate::link_ui::page_input(cx, doc_links, view);
+    let on_link = tool == QuickTool::Link && can_modify && offers.link && crate::link_ui::page_input(cx, doc_links, view);
     if tool == QuickTool::Select
         && resp.secondary_clicked()
         && can_modify
+        && offers.link
         && let Some(p) = pointer.filter(|p| xf.rect.contains(*p))
         && let Some(l) = doc.links().iter().find(|l| l.page == i && crate::link_ui::screen_rect(&xf, info, i, l.rect).expand(2.0).contains(p))
     {
@@ -1327,7 +1368,7 @@ fn page_tool_input(ui: &mut egui::Ui, view: &mut DocView, frame: &mut PageFrame<
 
 /// Text layer: find matches, selection, I-beam and drag-to-select.
 fn text_layer(ui: &mut egui::Ui, view: &mut DocView, frame: &mut PageFrame<'_>, slot: &PageSlot, input: &PageInput) {
-    let PageEnv { info, selects_text, tool, .. } = frame.env;
+    let PageEnv { info, selects_text, tool, offers, .. } = frame.env;
     let PageSlot { i, r, xf } = *slot;
     let PageFrame { resp, ptr, pointer, .. } = *frame;
     if let Some(text) = view.texts.get(&i).cloned() {
@@ -1336,7 +1377,12 @@ fn text_layer(ui: &mut egui::Ui, view: &mut DocView, frame: &mut PageFrame<'_>, 
             && !input.consumed
             && let Some(p) = pointer.filter(|p| r.contains(*p))
         {
-            text_pointer_input(ui, view, &text, TextPointer { page: i, xf, rect: r, info, tool, resp, ptr: ptr.clone(), pointer: p });
+            text_pointer_input(
+                ui,
+                view,
+                &text,
+                TextPointer { page: i, xf, rect: r, info, tool, resp, ptr: ptr.clone(), pointer: p, column_on: offers.column },
+            );
         }
     }
 }
@@ -1386,6 +1432,8 @@ struct TextPointer<'a> {
     resp: &'a egui::Response,
     ptr: PagePointer,
     pointer: Pos2,
+    /// Alt-drag selects a column only when the profile offers Column select.
+    column_on: bool,
 }
 
 struct TextGesture<'a> {
@@ -1404,11 +1452,11 @@ struct TextGesture<'a> {
 }
 
 fn text_pointer_input(ui: &mut egui::Ui, view: &mut DocView, text: &PageText, pointer: TextPointer<'_>) {
-    let TextPointer { page, xf, rect, info, tool, resp, ptr, pointer: screen_pointer } = pointer;
+    let TextPointer { page, xf, rect, info, tool, resp, ptr, pointer: screen_pointer, column_on } = pointer;
     let (vx, vy) = xf.screen_to_view(screen_pointer);
     let over_text = text.glyphs.iter().any(|glyph| vx >= glyph.rect[0] && vx <= glyph.rect[2] && vy >= glyph.rect[1] && vy <= glyph.rect[3]);
     let over_link = info.links.iter().any(|link| link.page == page && xf.user_rect(info, page, link.rect).contains(screen_pointer));
-    let column = tool == QuickTool::ColumnSelect || ui.input(|input| input.modifiers.alt);
+    let column = tool == QuickTool::ColumnSelect || column_on && ui.input(|input| input.modifiers.alt);
     let gesture = TextGesture { page, xf, rect, tool, ptr, resp, pointer: screen_pointer, vx, vy, over_text, over_link, column };
     update_text_cursor(view, &gesture);
     update_selection_on_press(ui, view, text, &gesture);
@@ -1547,6 +1595,7 @@ fn page_overlays(ui: &mut egui::Ui, view: &mut DocView, frame: &mut PageFrame<'_
         table_preview,
         tool,
         unobstructed,
+        offers,
         ..
     } = frame.env;
     let PageSlot { i, xf, .. } = *slot;
@@ -1554,7 +1603,7 @@ fn page_overlays(ui: &mut egui::Ui, view: &mut DocView, frame: &mut PageFrame<'_
     let painter = ui.painter();
     let tool_cx = PageToolContext { ui, resp, xf: &xf, ptr, page: i, doc, info };
     let pcx = comments::PageCx { page: i, xf: &xf, ptr, info, tool, prefs, allowed, hidden: comments_hidden, redact_mark };
-    if tool == QuickTool::Select && !input.consumed {
+    if tool == QuickTool::Select && !input.consumed && offers.copy {
         crate::image_pick::page_input(resp, &xf, i, info, doc, pointer, view);
     }
     crate::image_pick::drop_stale(doc, view);
@@ -1792,6 +1841,7 @@ fn draw_pages(
         unobstructed,
         visible_pages,
         y_shift,
+        offers,
         ..
     } = *env;
     // egui's drag responses accept every pointer button. Keep a wheel gesture from also
@@ -1967,7 +2017,7 @@ fn draw_pages(
                 });
                 ui.separator();
             }
-            if ui.button(tl!("Properties…")).clicked() {
+            if offers.field_props && ui.button(tl!("Properties…")).clicked() {
                 field_menu = Some(FieldMenu::Properties);
                 ui.close();
             }
@@ -1983,7 +2033,7 @@ fn draw_pages(
             }
             return;
         }
-        if let Some((page, index)) = view.links.context {
+        if let Some((page, index)) = view.links.context.filter(|_| offers.link) {
             if ui.button(tl!("Properties…")).clicked() {
                 view.links.open_existing = Some((page, index));
                 ui.close();
@@ -1995,7 +2045,7 @@ fn draw_pages(
                 ui.close();
             }
             ui.separator();
-            if ui.add_enabled(can_modify, egui::Button::new(tl!("Remove all links"))).clicked() {
+            if offers.remove_links && ui.add_enabled(can_modify, egui::Button::new(tl!("Remove all links"))).clicked() {
                 view.pending_edit = Some(Edit::RemoveLinks { pages: None });
                 view.links.selected = None;
                 view.links.context = None;
@@ -2003,7 +2053,7 @@ fn draw_pages(
             }
             return;
         }
-        if view.comments.selected.is_none() {
+        if view.comments.selected.is_none() && offers.copy {
             let selected = view.selected_text().is_some_and(|t| !t.is_empty());
             let key = crate::commands::shortcut_label(ui.ctx(), crate::commands::COPY);
             if ui.add_enabled(can_copy && selected, egui::Button::new(tl!("Copy")).shortcut_text(key)).clicked() {
@@ -2015,6 +2065,7 @@ fn draw_pages(
         // Over a picture (and no comment): Copy Image, as in Acrobat's page menu.
         let mut copy_image = None;
         if view.comments.selected.is_none()
+            && offers.copy
             && let Some((page, at)) = view.comments.context_at
         {
             // The page's content is parsed once per right-click, not on every frame the menu is open.
@@ -2518,7 +2569,7 @@ fn track_scroll<T>(ui: &egui::Ui, view: &mut DocView, out: &egui::containers::sc
 /// The hover tip, find bar, size hint and the in-place editors drawn over the pages. Whether the
 /// text editor was finished.
 fn frame_overlays(ui: &mut egui::Ui, view: &mut DocView, env: &PageEnv<'_>, primary_down: bool, hover_text: Option<(Pos2, String)>) -> bool {
-    let PageEnv { added, author, avail, can_modify, doc, form, info, prefs, t, today, tool, units, unobstructed, .. } = *env;
+    let PageEnv { added, author, avail, can_modify, doc, form, info, prefs, t, today, tool, units, unobstructed, offers, .. } = *env;
     if let Some((pos, text)) = hover_text {
         // Click-through, as a tooltip is: the pages lose the pointer under anything that isn't.
         let tip = egui::Area::new(egui::Id::unique("canvas-hover")).order(egui::Order::Tooltip).interactable(false);
@@ -2528,6 +2579,10 @@ fn frame_overlays(ui: &mut egui::Ui, view: &mut DocView, env: &PageEnv<'_>, prim
                 ui.label(text);
             });
         });
+    }
+    // A profile without Find closes the find bar (the Search panel is gated as a panel).
+    if view.find.as_ref().is_some_and(|f| !f.in_panel) && !offers.find {
+        view.find = None;
     }
     find_bar(view, info.pages.len(), avail, ui, t);
     page_size_hint(view, info, units, avail, unobstructed, ui, t);
@@ -2539,6 +2594,9 @@ fn frame_overlays(ui: &mut egui::Ui, view: &mut DocView, env: &PageEnv<'_>, prim
     }
     if let Some(e) = crate::edit_text_ui::overlay(ui.ctx(), view, info) {
         view.pending_edit = Some(e);
+    }
+    if !offers.fields.fill {
+        view.forms.focus = None;
     }
     let text_box = crate::forms_ui::text_box(doc, view, form);
     if let Some(e) = crate::forms_ui::overlay(ui.ctx(), view, info, form, primary_down, text_box.as_ref(), today) {
@@ -2596,8 +2654,12 @@ fn follow_link(
                 view.go_to_dest(p, dest, &doc.info);
             }
         }
-        LinkTarget::Uri(u) => app.request_document_url(&u, crate::LinkOrigin::Link),
+        LinkTarget::Uri(u) => area::follow_url(app, &u, crate::LinkOrigin::Link),
         LinkTarget::SetLayers { changes, preserve_rb } => set_layers(app, index, &changes, preserve_rb),
+        // Another file opens in a tab of its own: not without tabs and File ▸ Open.
+        LinkTarget::RemoteGoTo { .. } if !app.profile.allows_feature(crate::features::Feature::App) || !app.profile.allows_id("file.open") => {
+            app.notify(tl!("Not allowed"));
+        }
         LinkTarget::RemoteGoTo { file, destination, .. } => return Some((view_id, file, destination)),
         LinkTarget::Other(s) => app.notify_fmt("This PDF uses the unsupported {s} action.", &[("s", &s)]),
     }
@@ -2830,7 +2892,8 @@ pub fn document_area(app: &mut PdfCraftApp, index: usize, ui: &mut egui::Ui) {
         app.views[index].print_pages.clear();
     }
     // The Prepare a form panel is open (or a field tool is picked): fields are edited, not filled.
-    let preparing = app.is_preparing();
+    // Not when the profile has no form design.
+    let preparing = app.is_preparing() && app.profile.allows_feature(crate::features::Feature::FormDesign);
     // Prepare a form ▸ Calculation order: the order's steps and links on the page.
     let calc_order = preparing && app.left_open && app.left == crate::LeftPanel::CalculationOrder;
     // Edit a PDF: added text and images can be selected, moved and edited.
@@ -2944,6 +3007,9 @@ pub fn document_area(app: &mut PdfCraftApp, index: usize, ui: &mut egui::Ui) {
     let form = doc.form.clone();
     let generation = doc.edit_generation();
     let can_fill = doc.allows_form_filling();
+    // What the profile offers here; what it refuses is not drawn, and does nothing.
+    let offers = Offers::of(&app.profile, tool);
+    let link_on = offers.link;
     let can_crop = doc.allows_assembly();
     let signature = app.signature.clone();
     let initials = app.initials.clone();
@@ -3033,6 +3099,7 @@ pub fn document_area(app: &mut PdfCraftApp, index: usize, ui: &mut egui::Ui) {
         y_shift,
         fill_text_size: app.fill_text_size,
         today,
+        offers,
     };
     let mut page_out = PageOut::default();
     let out = page_scroll(ui, scroll, egui::Id::unique(("page-view-scope", view.id)), |ui, viewport| {
@@ -3093,7 +3160,7 @@ pub fn document_area(app: &mut PdfCraftApp, index: usize, ui: &mut egui::Ui) {
     if editing_content {
         crate::content_ui::keys(ui.ctx(), view);
     }
-    if tool == QuickTool::Link {
+    if tool == QuickTool::Link && link_on {
         crate::link_ui::keys(ui.ctx(), view);
     } else {
         view.links.selected = None;
@@ -3203,7 +3270,7 @@ fn apply_frame_requests(app: &mut PdfCraftApp, index: usize, ui: &mut egui::Ui, 
         let doc = app.views[index].id;
         app.comment_attachment_action(doc, p, i, open);
     }
-    if let Some((name, w)) = field_props {
+    if let Some((name, w)) = field_props.filter(|_| app.profile.allows_id("form.field.properties")) {
         app.open_field_props(&name, w);
     }
     if let Some(FieldMenu::Duplicate(name)) = field_menu {
@@ -3252,7 +3319,7 @@ fn apply_frame_requests(app: &mut PdfCraftApp, index: usize, ui: &mut egui::Ui, 
     if let Some(why) = refused {
         app.notify_error(why);
     }
-    if open_signature || open_initials {
+    if open_signature && app.profile.allows_id("sign.fill.signature") || open_initials && app.profile.allows_id("sign.fill.initials") {
         app.signature_draft = crate::fill_sign::SigDraft::new(open_initials, &app.comment_prefs.author);
         app.dialog = Some(crate::Dialog::Signature);
     }
@@ -3282,9 +3349,9 @@ fn apply_frame_requests(app: &mut PdfCraftApp, index: usize, ui: &mut egui::Ui, 
     if copy_selected {
         app.execute("edit.copy");
     }
-    // Read mode hides the tools (#2646), and full screen is the page and nothing else (#1459);
-    // the quick tools come back with the window.
-    if app.mode != crate::Mode::Read && !app.full_screen {
+    // Read mode hides the tools (#2646), full screen is the page and nothing else (#1459), and
+    // the profile can hide them too; the quick tools come back with the window.
+    if app.mode != crate::Mode::Read && !app.full_screen && app.profile.shows_part(crate::profile::parts::QUICK_BAR) {
         quick_bar(app, avail, ui);
     }
     if let Some((source, file, destination)) = remote_open {

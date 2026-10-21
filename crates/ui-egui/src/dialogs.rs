@@ -89,7 +89,7 @@ fn profile_id() -> egui::Id {
 
 /// Hand the profile to panel bodies drawn without the app (Signatures, Accessibility, Tags),
 /// through [`frame_profile`]; republished only when it changed.
-fn publish_profile(app: &PdfCraftApp, ctx: &egui::Context) {
+pub(crate) fn publish_profile(app: &PdfCraftApp, ctx: &egui::Context) {
     if *frame_profile(ctx) != app.profile {
         ctx.data_mut(|d| d.insert_temp(profile_id(), std::sync::Arc::new(app.profile.clone())));
     }

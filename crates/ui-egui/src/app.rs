@@ -377,6 +377,8 @@ impl eframe::App for PdfCraftApp {
         // Whatever set it (the control channel, a host assigning the profile), nothing the
         // profile refuses stays open or armed.
         self.enforce_profile();
+        // Drawing code without the app (the page grid, notices, panels) reads it from here.
+        crate::dialogs::publish_profile(self, ctx);
         #[cfg(not(target_arch = "wasm32"))]
         {
             if let Some(worker) = &self.open_worker {

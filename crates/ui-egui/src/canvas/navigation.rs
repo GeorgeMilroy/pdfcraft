@@ -369,12 +369,9 @@ pub fn shortcuts(view: &mut DocView, ctx: &egui::Context, speed: crate::scroll_s
         view.rotate_view(false);
     }
     zoom_shortcuts(view, &pressed);
-    if pressed(cmd(Key::OpenBracket)) {
-        view.view_history(false);
-    }
-    if pressed(cmd(Key::CloseBracket)) {
-        view.view_history(true);
-    }
+    // ⌘[ / ⌘] run as registered commands; one that reaches here has no view to go to or is
+    // refused by the profile, and is only consumed.
+    let _ = pressed(cmd(Key::OpenBracket)) || pressed(cmd(Key::CloseBracket));
     let key = |k| (arrows || !matches!(k, Key::ArrowLeft | Key::ArrowRight | Key::ArrowUp | Key::ArrowDown)) && ctx.input(|i| i.key_pressed(k));
     // An open menu takes Escape first and closes; the selection stays for the next one (#3535).
     if key(Key::Escape) && !egui::Popup::is_any_open(ctx) {

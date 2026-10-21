@@ -151,8 +151,18 @@ fn toggle_edit(f: &FormField, w: &FormWidget) -> Option<Edit> {
     Some(Edit::SetFieldValue { name: f.name.clone(), value })
 }
 
+/// What the profile lets the pointer do with fields. A field it refuses is inert: it shows its
+/// value and takes no click, as if it were printed on the page.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct FieldOffers {
+    /// Filling in fields (the formFill feature).
+    pub fill: bool,
+    /// Signing an empty signature field (the digitalSignatures feature).
+    pub sign: bool,
+}
+
 /// Clicks on form widgets of one page. `true` when a field owns the press or click.
-pub(crate) fn page_input(cx: PageToolContext<'_>, form: &[FormField], allowed: bool, view: &mut DocView) -> bool {
+pub(crate) fn page_input(cx: PageToolContext<'_>, form: &[FormField], allowed: bool, offers: FieldOffers, view: &mut DocView) -> bool {
     let PageToolContext { ui, resp, xf, ptr, page, info, .. } = cx;
     let Some(p) = ptr.within(xf.rect) else { return false };
     let hit = form.iter().find_map(|f| {
@@ -167,6 +177,15 @@ pub(crate) fn page_input(cx: PageToolContext<'_>, form: &[FormField], allowed: b
     // makes it the name the user interface identifies the field by.
     if let Some(tip) = f.tooltip.as_deref().filter(|t| !t.trim().is_empty()) {
         resp.clone().on_hover_text_at_pointer(tip);
+    }
+    // Push buttons stay: each of their actions is gated where it runs.
+    let offered = match f.kind {
+        FormFieldKind::PushButton => true,
+        FormFieldKind::Signature => offers.sign,
+        _ => offers.fill,
+    };
+    if !offered {
+        return false;
     }
     // Empty signature fields are signed by clicking them (Use a certificate); push buttons run
     // their action.

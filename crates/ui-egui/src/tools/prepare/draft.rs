@@ -3,8 +3,11 @@ use super::{Calculate, FieldLook, FieldProps, FormField, FormFieldKind, Format, 
 // ───────────────────────────────────────────────────────────────────────── Field Properties
 
 impl crate::PdfCraftApp {
-    /// Open Field Properties for a field of the active document.
+    /// Open Field Properties for a field of the active document, unless the profile refuses it.
     pub fn open_field_props(&mut self, name: &str, widget: usize) {
+        if !self.profile.allows_id("form.field.properties") {
+            return;
+        }
         let Some((index, id)) = self.active_ids() else { return };
         let names = self.views[index].prepare.names();
         if names.len() > 1 && names.iter().any(|n| n == name) {

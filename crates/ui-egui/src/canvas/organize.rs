@@ -92,7 +92,10 @@ pub(crate) fn grid_page_rect(cell: Rect, page: Vec2) -> Rect {
 }
 
 /// The organize toolbar: page operations on the selection (Acrobat's Organize Pages bar).
+/// `editable` greys out what the document doesn't allow; what the profile refuses is not drawn.
 fn organize_toolbar(view: &mut DocView, info: &DocInfo, editable: bool, dirty: bool, unobstructed: bool, ui: &mut egui::Ui, t: &Tokens) {
+    let profile = crate::dialogs::frame_profile(ui.ctx());
+    let pages_on = profile.allows_feature(crate::features::Feature::Pages);
     let targets = view.target_pages();
     let n = info.pages.len();
     let (first, last) = (targets.first().copied().unwrap_or(0), targets.last().copied().unwrap_or(0));
@@ -107,6 +110,9 @@ fn organize_toolbar(view: &mut DocView, info: &DocInfo, editable: bool, dirty: b
             // Fixed width so the buttons never shift as the selection text changes.
             ui.add_sized([150.0, 30.0], egui::Label::new(egui::RichText::new(label).font(theme::medium(13.0)).color(t.text_muted)).truncate());
             ui.add_enabled_ui(editable, |ui| {
+                if !pages_on {
+                    return;
+                }
                 ui.add_space(8.0);
                 if ui.add_enabled_ui(first > 0, |ui| icons::button(ui, "chevron-left", 30.0, false, tl!("Move earlier"))).inner.clicked() {
                     view.pending_edit = Some(Edit::MovePages { pages: targets.clone(), to: first - 1 });
@@ -120,11 +126,13 @@ fn organize_toolbar(view: &mut DocView, info: &DocInfo, editable: bool, dirty: b
                     view.organize = false;
                 }
                 // What the grid shows is what is saved.
-                let save = ui.add_enabled_ui(dirty, |ui| widgets::pill_button(ui, tl!("Save pages"), true)).inner;
-                if save.on_hover_text(tl!("Save these pages as one PDF")).on_disabled_hover_text(tl!("No changes to save")).clicked() {
-                    view.pending_action = Some(ViewAction::Save);
+                if profile.allows_save() {
+                    let save = ui.add_enabled_ui(dirty, |ui| widgets::pill_button(ui, tl!("Save pages"), true)).inner;
+                    if save.on_hover_text(tl!("Save these pages as one PDF")).on_disabled_hover_text(tl!("No changes to save")).clicked() {
+                        view.pending_action = Some(ViewAction::Save);
+                    }
+                    ui.add_space(8.0);
                 }
-                ui.add_space(8.0);
                 // Page size in the grid (right to left: in, the percentage, out).
                 let zoom = view.grid_zoom;
                 if ui
@@ -153,7 +161,7 @@ fn organize_toolbar(view: &mut DocView, info: &DocInfo, editable: bool, dirty: b
     });
     // Keys act on the selection unless a text field or a dialog has them (Delete under
     // Preferences deleted the selected pages).
-    if editable && unobstructed && !ui.ctx().egui_wants_keyboard_input() {
+    if editable && pages_on && unobstructed && !ui.ctx().egui_wants_keyboard_input() {
         use egui::{Key, Modifiers};
         let (del, esc) = ui.input_mut(|i| {
             (
@@ -166,13 +174,13 @@ fn organize_toolbar(view: &mut DocView, info: &DocInfo, editable: bool, dirty: b
             let any = |f: &dyn Fn(&egui::Event) -> bool| i.events.iter().any(f);
             (any(&|e| matches!(e, egui::Event::Copy)), any(&|e| matches!(e, egui::Event::Cut)), any(&|e| matches!(e, egui::Event::Paste(_))))
         });
-        if copy || cut {
+        if copy && profile.allows_id("page.copy") || cut && profile.allows_id("page.cut") {
             view.pending_action = Some(ViewAction::CopyPages { cut });
         }
-        if paste {
+        if paste && profile.allows_id("page.paste") {
             view.pending_action = Some(ViewAction::PastePages);
         }
-        if del && targets.len() < n {
+        if del && targets.len() < n && profile.allows_id("page.delete") {
             view.pending_edit = Some(Edit::DeletePages { pages: targets });
         }
         if esc {
@@ -275,6 +283,11 @@ pub(super) fn organize_grid(view: &mut DocView, info: &DocInfo, editable: bool, 
     let reveal = view.grid_reveal.take();
     let mut open_page = None;
     organize_toolbar(view, info, editable, dirty, unobstructed, ui, t);
+    // Moving, rotating, deleting and inserting pages: what the profile refuses isn't offered.
+    let profile = crate::dialogs::frame_profile(ui.ctx());
+    let offers = |id: &str| profile.allows_id(id);
+    let pages_on = profile.allows_feature(crate::features::Feature::Pages);
+    let editable = editable && pages_on;
     let viewport = ui.available_rect_before_wrap();
     view.viewport_screen = viewport;
     let auto_delta = if unobstructed {
@@ -377,16 +390,21 @@ pub(super) fn organize_grid(view: &mut DocView, info: &DocInfo, editable: bool, 
                         |ui| {
                             ui.spacing_mut().item_spacing.x = 3.0;
                             ui.add_enabled_ui(editable, |ui| {
+                                if !pages_on {
+                                    return;
+                                }
                                 for (icon, degrees, key) in
                                     [("rotate-ccw", -90, "Rotate page {label} counterclockwise"), ("rotate-cw", 90, "Rotate page {label} clockwise")]
                                 {
                                     let label = crate::i18n::fmt(tl!(key), &[("label", &p.label)]);
-                                    if icons::button(ui, icon, 26.0, false, &label).clicked() {
+                                    if offers("page.rotate") && icons::button(ui, icon, 26.0, false, &label).clicked() {
                                         view.pending_edit = Some(Edit::RotatePages { pages: vec![i], degrees });
                                     }
                                 }
                                 let label = crate::i18n::fmt(tl!("Delete page {label}"), &[("label", &p.label)]);
-                                if ui.add_enabled_ui(info.pages.len() > 1, |ui| icons::button(ui, "trash-2", 26.0, false, &label)).inner.clicked() {
+                                if offers("page.delete")
+                                    && ui.add_enabled_ui(info.pages.len() > 1, |ui| icons::button(ui, "trash-2", 26.0, false, &label)).inner.clicked()
+                                {
                                     view.pending_edit = Some(Edit::DeletePages { pages: vec![i] });
                                 }
                             });
@@ -407,28 +425,31 @@ pub(super) fn organize_grid(view: &mut DocView, info: &DocInfo, editable: bool, 
                         view.selected = [i].into();
                         view.go_to_page(i);
                     }
-                    if ui.button(tl!("Extract pages")).clicked() {
+                    if offers("page.extract") && ui.button(tl!("Extract pages")).clicked() {
                         view.pending_action = Some(ViewAction::Extract);
                         ui.close();
                     }
-                    if ui.button(tl!("Split document…")).clicked() {
+                    if offers("page.split") && ui.button(tl!("Split document…")).clicked() {
                         view.pending_action = Some(ViewAction::SplitBeforeSelected);
                         ui.close();
                     }
-                    if ui.add_enabled(editable, egui::Button::new(tl!("Replace pages…"))).clicked() {
+                    if !pages_on {
+                        return;
+                    }
+                    if offers("page.replace") && ui.add_enabled(editable, egui::Button::new(tl!("Replace pages…"))).clicked() {
                         view.pending_action = Some(ViewAction::ReplacePages);
                         ui.close();
                     }
                     ui.separator();
-                    if ui.add_enabled(editable, egui::Button::new(tl!("Cut"))).clicked() {
+                    if offers("page.cut") && ui.add_enabled(editable, egui::Button::new(tl!("Cut"))).clicked() {
                         view.pending_action = Some(ViewAction::CopyPages { cut: true });
                         ui.close();
                     }
-                    if ui.button(tl!("Copy")).clicked() {
+                    if offers("page.copy") && ui.button(tl!("Copy")).clicked() {
                         view.pending_action = Some(ViewAction::CopyPages { cut: false });
                         ui.close();
                     }
-                    if ui.add_enabled(editable, egui::Button::new(tl!("Paste after"))).clicked() {
+                    if offers("page.paste") && ui.add_enabled(editable, egui::Button::new(tl!("Paste after"))).clicked() {
                         view.pending_action = Some(ViewAction::PastePages);
                         ui.close();
                     }
@@ -436,7 +457,7 @@ pub(super) fn organize_grid(view: &mut DocView, info: &DocInfo, editable: bool, 
             }
         }
         // Between pages (and at both ends): insert files right there.
-        if editable && !middle_gesture && view.org_drag.is_none() {
+        if editable && offers("page.insert") && !middle_gesture && view.org_drag.is_none() {
             let mid = |r: &Rect| r.top() + 16.0 + (cell.y - 88.0) / 2.0;
             for (i, c) in &cells {
                 let label = info
@@ -510,8 +531,8 @@ pub(super) fn organize_grid(view: &mut DocView, info: &DocInfo, editable: bool, 
     // Files dragged in from outside go to the gap under the pointer. Some platforms don't say
     // where the pointer is until the files are dropped; then the whole grid is the target.
     let pointer = ui.input(|i| i.pointer.hover_pos()).filter(|p| viewport.contains(*p));
-    view.grid_gap = pointer.filter(|_| editable && view.org_drag.is_none()).and_then(|p| drop_gap(&cells, p));
-    if editable && ui.input(|i| !i.raw.hovered_files.is_empty()) {
+    view.grid_gap = pointer.filter(|_| editable && offers("page.insert") && view.org_drag.is_none()).and_then(|p| drop_gap(&cells, p));
+    if editable && offers("page.insert") && ui.input(|i| !i.raw.hovered_files.is_empty()) {
         let painter = ui.painter().with_clip_rect(viewport);
         painter.rect_stroke(viewport.shrink(2.0), CornerRadius::same(6), Stroke::new(2.0, t.accent), egui::StrokeKind::Inside);
         if let Some(gap) = view.grid_gap {
