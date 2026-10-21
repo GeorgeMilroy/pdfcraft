@@ -85,6 +85,7 @@ pub mod brand;
 pub mod bulk_fields;
 mod dialogs;
 mod edit_text_ui;
+pub mod features;
 pub mod field_table_ui;
 pub mod profile;
 pub use edit_text_ui::CropMode;
@@ -642,6 +643,8 @@ pub struct PdfCraftApp {
     pub host_dirty: Option<HostDirtyFn>,
     /// What an embedding host lets the interface do (view only, comments only, hidden commands).
     pub profile: profile::UiProfile,
+    /// The features of each undoable step ([`editing::EditLog`]).
+    pub(crate) edit_log: std::collections::HashMap<pdfcraft_engine::DocId, editing::EditLog>,
     /// A pending "save changes?" question (closing a dirty tab or quitting).
     pub close_request: Option<CloseRequest>,
     /// The button of the "save changes?" question the keyboard has chosen; Save when it opens.
@@ -1021,6 +1024,7 @@ impl PdfCraftApp {
             host_save: None,
             host_dirty: None,
             profile: profile::UiProfile::default(),
+            edit_log: std::collections::HashMap::new(),
             close_request: None,
             save_prompt_button: Default::default(),
             #[cfg(not(target_arch = "wasm32"))]
@@ -2254,6 +2258,20 @@ impl PdfCraftApp {
 
     /// Enter a tool from the catalogue, Home, palette or control channel. Organize is a
     /// workspace, so opening its panel also opens the page grid (without toggling it off).
+    /// Uses `profile` from now on and puts down what it no longer allows: an armed tool, an open
+    /// panel or dialog. Hosts set the profile this way rather than assigning the field.
+    pub fn set_profile(&mut self, profile: profile::UiProfile) {
+        self.profile = profile;
+        self.enforce_profile();
+    }
+
+    /// Puts down what the profile doesn't allow (after it changed).
+    pub(crate) fn enforce_profile(&mut self) {
+        if self.right.is_some_and(|p| !self.profile.shows_panel(p)) {
+            self.choose_right_panel(None);
+        }
+    }
+
     pub(crate) fn select_tool(&mut self, id: &'static str) {
         if self.profile.hides_group(id) {
             return;
