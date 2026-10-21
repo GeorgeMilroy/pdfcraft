@@ -3,6 +3,7 @@ use super::{
     Align2, Availability, Color32, CornerRadius, LeftPanel, PdfCraftApp, Rect, Sense, Stroke, Tokens, ToolGroup, ToolItem, catalog, icons, theme,
     vec2, widgets,
 };
+use super::{item_shown, offers};
 
 /// The page operations Edit shows as a row of icon buttons, as Acrobat's Edit panel does.
 const EDIT_PAGE_BUTTONS: [&str; 4] = ["page.rotate", "page.insert", "page.delete", "page.extract"];
@@ -20,7 +21,8 @@ const EDIT_OTHER_TOOLS: [&str; 3] = ["combine", "redact", "form"];
 /// Every item comes from the catalogue, so its label, icon and availability have one source.
 pub(super) fn edit_panel(app: &mut PdfCraftApp, ui: &mut egui::Ui, t: &Tokens, g: &'static ToolGroup) {
     let items = || g.sections.iter().flat_map(|s| s.items.iter());
-    let item = |command: &str| items().find(|i| i.command == command);
+    let profile = app.profile.clone();
+    let item = |command: &str| items().find(|i| i.command == command).filter(|i| item_shown(&profile, i));
     let mut run = None;
     let mut tool = None;
     // Back to All tools only when Edit was opened from there; the Edit tab is its own way back.
@@ -35,7 +37,7 @@ pub(super) fn edit_panel(app: &mut PdfCraftApp, ui: &mut egui::Ui, t: &Tokens, g
         let title_width = (ui.available_width() - 2.0 * (26.0 + ui.spacing().item_spacing.x)).max(1.0);
         ui.add_sized([title_width, 26.0], egui::Label::new(egui::RichText::new(title).font(theme::semibold(15.5)).color(t.text)).truncate())
             .on_hover_text(title);
-        if icons::button(ui, "settings", 26.0, false, tl!("Preferences")).clicked() {
+        if offers(&app.profile, "app.preferences") && icons::button(ui, "settings", 26.0, false, tl!("Preferences")).clicked() {
             run = Some("app.preferences");
         }
         if icons::button(ui, "x", 26.0, false, tl!("Close panel")).clicked() {
@@ -45,15 +47,17 @@ pub(super) fn edit_panel(app: &mut PdfCraftApp, ui: &mut egui::Ui, t: &Tokens, g
     ui.add_space(4.0);
     ui.separator();
     ui.add_space(6.0);
-    // Several objects selected: how many, and how to move them. Acrobat's panel has no idle hint.
-    let count = app.active_ids().filter(|_| app.quick_tool == crate::QuickTool::EditText).map_or(0, |(i, _)| app.views[i].objects.count());
-    if count > 0 {
-        ui.label(crate::i18n::trn(crate::i18n::current(), count as u64, "{n} object selected", "{n} objects selected"));
-        ui.label(tl!("Drag the selection to move it. Esc clears the selection."));
-        ui.add_space(6.0);
+    if offers(&app.profile, "edit.edit_text") {
+        // Several objects selected: how many, and how to move them. Acrobat's panel has no idle hint.
+        let count = app.active_ids().filter(|_| app.quick_tool == crate::QuickTool::EditText).map_or(0, |(i, _)| app.views[i].objects.count());
+        if count > 0 {
+            ui.label(crate::i18n::trn(crate::i18n::current(), count as u64, "{n} object selected", "{n} objects selected"));
+            ui.label(tl!("Drag the selection to move it. Esc clears the selection."));
+            ui.add_space(6.0);
+        }
+        // Format text at the top while text is selected or being added.
+        format_section(app, ui, t);
     }
-    // Format text at the top while text is selected or being added.
-    format_section(app, ui, t);
     egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| {
         widgets::section_title(ui, tl!("Modify page"));
         ui.horizontal(|ui| {
@@ -81,8 +85,13 @@ pub(super) fn edit_panel(app: &mut PdfCraftApp, ui: &mut egui::Ui, t: &Tokens, g
         }
 
         widgets::section_title(ui, tl!("Add content"));
-        let content: Vec<_> =
-            g.sections.iter().filter(|s| s.title == "Add content").flat_map(|s| s.items.iter()).filter(|i| i.command != "edit.edit_text").collect();
+        let content: Vec<_> = g
+            .sections
+            .iter()
+            .filter(|s| s.title == "Add content")
+            .flat_map(|s| s.items.iter())
+            .filter(|i| i.command != "edit.edit_text" && item_shown(&app.profile, i))
+            .collect();
         let more_id = egui::Id::unique("edit_panel_more");
         let more = ui.data(|d| d.get_temp::<bool>(more_id)).unwrap_or(false);
         let shown = if more { content.len() } else { EDIT_CONTENT_SHOWN.min(content.len()) };
@@ -113,7 +122,7 @@ pub(super) fn edit_panel(app: &mut PdfCraftApp, ui: &mut egui::Ui, t: &Tokens, g
         }
 
         widgets::section_title(ui, tl!("Other options"));
-        for other in EDIT_OTHER_TOOLS.iter().filter_map(|id| catalog::group(id)) {
+        for other in EDIT_OTHER_TOOLS.iter().filter(|id| app.shows_tool_group(id)).filter_map(|id| catalog::group(id)) {
             if edit_row(ui, t, other.icon, tl!(other.label), other.availability).clicked() {
                 tool = Some(other.id);
             }
@@ -146,7 +155,7 @@ pub(super) fn actions_menu(
     egui::Popup::menu(resp).show(|ui| {
         ui.set_min_width(180.0);
         for (n, id) in item.actions.iter().enumerate() {
-            let Some(spec) = pdfcraft_engine::commands::command(id) else { continue };
+            let Some(spec) = pdfcraft_engine::commands::command(id).filter(|s| offers(&app.profile, s.id)) else { continue };
             // Add stays usable with no document open: it asks for a file first.
             let enabled = (n == 0 && app.active.is_none()) || app.command_enabled(spec);
             let label = crate::i18n::menu_label(spec.id, spec.label);

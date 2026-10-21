@@ -1,3 +1,4 @@
+use super::offers;
 use super::{Align, Align2, Color32, CornerRadius, DocInfo, Layout, Nav, Rect, Sense, Stroke, Tokens, icons, pos2, theme, vec2};
 
 /// Page tools in the Pages panel's header (#4415): a menu, as Bookmark options is in its panel,
@@ -87,7 +88,10 @@ pub(super) fn thumbnail_size(ui: &mut egui::Ui, t: &Tokens, view: &mut crate::Do
 /// (the selection page commands and Print act on) without moving the document. Right-click
 /// offers Extract, Cut, Copy and Paste on the selection, or on the page clicked; dragging
 /// moves the selection, or the page grabbed, to the gap it is dropped on.
+/// `editable`: the document and the profile let pages change; each command the profile refuses
+/// is left out.
 pub(super) fn pages(ui: &mut egui::Ui, t: &Tokens, info: &DocInfo, view: &mut crate::DocView, modal: bool, editable: bool, nav: &mut Option<Nav>) {
+    let profile = &*crate::dialogs::frame_profile(ui.ctx());
     // Escape drops the selection while the pointer is over the panel and nothing else wants the key.
     if !modal
         && !view.selected.is_empty()
@@ -100,6 +104,7 @@ pub(super) fn pages(ui: &mut egui::Ui, t: &Tokens, info: &DocInfo, view: &mut cr
     // Delete (or Backspace) deletes the selection, or the current page, likewise.
     if !modal
         && editable
+        && offers(profile, "page.delete")
         && !ui.ctx().egui_wants_keyboard_input()
         && ui.rect_contains_pointer(ui.clip_rect())
         && ui.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Delete) || i.consume_key(egui::Modifiers::NONE, egui::Key::Backspace))
@@ -182,38 +187,38 @@ pub(super) fn pages(ui: &mut egui::Ui, t: &Tokens, info: &DocInfo, view: &mut cr
                 if !view.target_pages().contains(&i) {
                     view.click_page(i, egui::Modifiers::NONE, true);
                 }
-                if ui.button(tl!("Extract pages")).clicked() {
+                if offers(profile, "page.extract") && ui.button(tl!("Extract pages")).clicked() {
                     view.pending_action = Some(crate::canvas::ViewAction::Extract);
                     ui.close();
                 }
-                if ui.button(tl!("Split document…")).clicked() {
+                if offers(profile, "page.split") && ui.button(tl!("Split document…")).clicked() {
                     if view.selected.is_empty() {
                         view.select_pages(&[i]);
                     }
                     view.pending_action = Some(crate::canvas::ViewAction::SplitBeforeSelected);
                     ui.close();
                 }
-                if ui.add_enabled(editable, egui::Button::new(tl!("Replace pages…"))).clicked() {
+                if offers(profile, "page.replace") && ui.add_enabled(editable, egui::Button::new(tl!("Replace pages…"))).clicked() {
                     view.pending_action = Some(crate::canvas::ViewAction::ReplacePages);
                     ui.close();
                 }
                 ui.separator();
-                if ui.add_enabled(editable, egui::Button::new(tl!("Cut"))).clicked() {
+                if offers(profile, "page.cut") && ui.add_enabled(editable, egui::Button::new(tl!("Cut"))).clicked() {
                     view.pending_action = Some(crate::canvas::ViewAction::CopyPages { cut: true });
                     ui.close();
                 }
-                if ui.button(tl!("Copy")).clicked() {
+                if offers(profile, "page.copy") && ui.button(tl!("Copy")).clicked() {
                     view.pending_action = Some(crate::canvas::ViewAction::CopyPages { cut: false });
                     ui.close();
                 }
-                if ui.add_enabled(editable, egui::Button::new(tl!("Paste after"))).clicked() {
+                if offers(profile, "page.paste") && ui.add_enabled(editable, egui::Button::new(tl!("Paste after"))).clicked() {
                     view.pending_action = Some(crate::canvas::ViewAction::PastePages);
                     ui.close();
                 }
                 ui.separator();
                 let some_left = view.target_pages().len() < count;
                 // Never every page: a document keeps at least one.
-                if ui.add_enabled(editable && some_left, egui::Button::new(tl!("Delete pages"))).clicked() {
+                if offers(profile, "page.delete") && ui.add_enabled(editable && some_left, egui::Button::new(tl!("Delete pages"))).clicked() {
                     delete_pages(view, count);
                     ui.close();
                 }
@@ -222,7 +227,7 @@ pub(super) fn pages(ui: &mut egui::Ui, t: &Tokens, info: &DocInfo, view: &mut cr
         ui.add_space(4.0);
     }
     page_drag(ui, t, view, &rows, dropped);
-    file_drop(ui, t, view, &rows, editable && !modal);
+    file_drop(ui, t, view, &rows, editable && offers(profile, "page.insert") && !modal);
 }
 
 /// Files dragged in from outside go to the gap under the pointer: remember where the panel is

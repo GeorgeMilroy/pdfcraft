@@ -15,9 +15,16 @@ use crate::canvas::ViewAction;
 use crate::theme::{self, Tokens};
 use crate::{LeftPanel, PdfCraftApp, icons, widgets};
 
-/// Whether the left panel is Organize pages: the tool is chosen, or the active view shows the grid.
+/// Whether the left panel is Organize pages: the tool is chosen, or the active view shows the grid,
+/// and the profile offers organizing pages.
 pub(crate) fn showing(app: &PdfCraftApp) -> bool {
-    app.left == LeftPanel::Tool("organize") || app.active.and_then(|i| app.views.get(i)).is_some_and(|v| v.organize)
+    (app.left == LeftPanel::Tool("organize") || app.active.and_then(|i| app.views.get(i)).is_some_and(|v| v.organize))
+        && app.profile.allows_feature(crate::features::Feature::Pages)
+        && offers(app, "page.organize")
+}
+
+fn offers(app: &PdfCraftApp, id: &str) -> bool {
+    crate::panels::offers(&app.profile, id)
 }
 
 /// The panel of the workspace Organize was opened from, shown again once Organize closes (by
@@ -44,6 +51,9 @@ pub(crate) fn panel(app: &mut PdfCraftApp, ui: &mut egui::Ui, t: &Tokens) {
     let Some(doc) = app.session.get(id) else { return };
     let info = &doc.info;
     let editable = doc.allows_assembly();
+    // The profile's refusals don't show; the document's permissions grey out.
+    let offered = |id: &str| crate::panels::offers(&app.profile, id);
+    let later = !app.profile.hide_planned;
     let n = info.pages.len();
     let mut act: Option<Act> = None;
     let mut back = false;
@@ -100,45 +110,50 @@ pub(crate) fn panel(app: &mut PdfCraftApp, ui: &mut egui::Ui, t: &Tokens) {
         ui.add_enabled_ui(editable, |ui| {
             ui.horizontal(|ui| {
                 ui.spacing_mut().item_spacing.x = 6.0;
-                if icons::button(ui, "rotate-ccw", 34.0, false, tl!("Rotate counterclockwise")).clicked() {
+                if offered("page.rotate_ccw") && icons::button(ui, "rotate-ccw", 34.0, false, tl!("Rotate counterclockwise")).clicked() {
                     act = Some(Act::Edit(Box::new(Edit::RotatePages { pages: targets.clone(), degrees: -90 })));
                 }
-                if icons::button(ui, "rotate-cw", 34.0, false, tl!("Rotate clockwise")).clicked() {
+                if offered("page.rotate") && icons::button(ui, "rotate-cw", 34.0, false, tl!("Rotate clockwise")).clicked() {
                     act = Some(Act::Edit(Box::new(Edit::RotatePages { pages: targets.clone(), degrees: 90 })));
                 }
                 // A document keeps at least one page.
                 let can_delete = targets.len() < n;
-                if ui.add_enabled_ui(can_delete, |ui| icons::button(ui, "trash-2", 34.0, false, tl!("Delete pages (Delete)"))).inner.clicked() {
+                if offered("page.delete")
+                    && ui.add_enabled_ui(can_delete, |ui| icons::button(ui, "trash-2", 34.0, false, tl!("Delete pages (Delete)"))).inner.clicked()
+                {
                     act = Some(Act::Edit(Box::new(Edit::DeletePages { pages: targets.clone() })));
                 }
-                if icons::button(ui, "file-output", 34.0, false, tl!("Extract pages to a new document")).clicked() {
+                if offered("page.extract") && icons::button(ui, "file-output", 34.0, false, tl!("Extract pages to a new document")).clicked() {
                     act = Some(Act::View(ViewAction::Extract));
                 }
             });
             ui.add_space(2.0);
             // Insert ▸: a blank page, pages from a file, or copies of the selected pages.
-            let insert = row(ui, t, "file-plus-2", tl!("Insert"), Availability::Ready, true);
-            egui::Popup::menu(&insert).align(egui::RectAlign::RIGHT_START).gap(6.0).show(|ui| {
-                if ui.button(tl!("Insert a blank page after the selection")).clicked() {
-                    let crop = info.pages.get(last).map_or([0.0, 0.0, 612.0, 792.0], |p| p.crop);
-                    let (w, h) = ((crop[2] - crop[0]).abs().max(1.0) as f64, (crop[3] - crop[1]).abs().max(1.0) as f64);
-                    act = Some(Act::Edit(Box::new(Edit::InsertBlankPage { at: last.saturating_add(1), width: w, height: h })));
-                }
-                if ui.button(tl!("Insert pages from a file…")).clicked() {
-                    act = Some(Act::View(ViewAction::InsertFromFile));
-                }
-                if ui.button(tl!("Duplicate pages")).clicked() {
-                    act = Some(Act::Command("page.duplicate"));
-                }
-            });
-            if row(ui, t, "replace", tl!("Replace"), Availability::Ready, false).clicked() {
+            let (blank, from_file, duplicate) = (offered("page.insert_blank"), offered("page.insert"), offered("page.duplicate"));
+            if blank || from_file || duplicate {
+                let insert = row(ui, t, "file-plus-2", tl!("Insert"), Availability::Ready, true);
+                egui::Popup::menu(&insert).align(egui::RectAlign::RIGHT_START).gap(6.0).show(|ui| {
+                    if blank && ui.button(tl!("Insert a blank page after the selection")).clicked() {
+                        let crop = info.pages.get(last).map_or([0.0, 0.0, 612.0, 792.0], |p| p.crop);
+                        let (w, h) = ((crop[2] - crop[0]).abs().max(1.0) as f64, (crop[3] - crop[1]).abs().max(1.0) as f64);
+                        act = Some(Act::Edit(Box::new(Edit::InsertBlankPage { at: last.saturating_add(1), width: w, height: h })));
+                    }
+                    if from_file && ui.button(tl!("Insert pages from a file…")).clicked() {
+                        act = Some(Act::View(ViewAction::InsertFromFile));
+                    }
+                    if duplicate && ui.button(tl!("Duplicate pages")).clicked() {
+                        act = Some(Act::Command("page.duplicate"));
+                    }
+                });
+            }
+            if offered("page.replace") && row(ui, t, "replace", tl!("Replace"), Availability::Ready, false).clicked() {
                 act = Some(Act::View(ViewAction::ReplacePages));
             }
-            if row(ui, t, "scissors", tl!("Split"), Availability::Ready, false).clicked() {
+            if offered("page.split") && row(ui, t, "scissors", tl!("Split"), Availability::Ready, false).clicked() {
                 act = Some(Act::View(ViewAction::Split));
             }
         });
-        if row(ui, t, "hash", tl!("Bates numbering"), Availability::Ready, false).clicked() {
+        if offered("edit.bates") && row(ui, t, "hash", tl!("Bates numbering"), Availability::Ready, false).clicked() {
             act = Some(Act::Command("edit.bates"));
         }
         divider(ui, t);
@@ -149,6 +164,9 @@ pub(crate) fn panel(app: &mut PdfCraftApp, ui: &mut egui::Ui, t: &Tokens) {
             ("file-text", "Page templates", Availability::Later, None),
             ("printer", "Print pages", Availability::Ready, Some("print.dialog")),
         ] {
+            if (availability == Availability::Later && !later) || command.is_some_and(|c| !offered(c)) {
+                continue;
+            }
             if row(ui, t, icon, tl!(label), availability, false).clicked()
                 && let Some(command) = command
             {
@@ -156,10 +174,10 @@ pub(crate) fn panel(app: &mut PdfCraftApp, ui: &mut egui::Ui, t: &Tokens) {
             }
         }
         divider(ui, t);
-        if row(ui, t, "tag", tl!("Page labels"), Availability::Ready, false).clicked() {
+        if offered("page.number") && row(ui, t, "tag", tl!("Page labels"), Availability::Ready, false).clicked() {
             act = Some(Act::Command("page.number"));
         }
-        if row(ui, t, "info", tl!("Page properties"), Availability::Ready, false).clicked() {
+        if offered("page.properties") && row(ui, t, "info", tl!("Page properties"), Availability::Ready, false).clicked() {
             act = Some(Act::Command("page.properties"));
         }
     });

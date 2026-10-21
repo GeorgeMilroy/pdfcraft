@@ -3,6 +3,8 @@ use super::{
     Align2, Availability, Color32, CornerRadius, LeftPanel, PdfCraftApp, Rect, Sense, Stroke, TOOL_GROUPS, Tokens, ToolGroup, catalog, icons, theme,
     vec2, widgets,
 };
+use super::{group_shown, item_shown, offers};
+use crate::features::Feature;
 
 const COLLAPSED_TOOLS: usize = 14;
 
@@ -23,7 +25,7 @@ pub fn left_panel(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
             // Organize pages has its own panel whenever the grid shows (with a document open).
             _ if app.active.is_some() && crate::organize_panel::showing(app) => crate::organize_panel::panel(app, ui, &t),
             LeftPanel::AllTools => all_tools(app, ui, &t),
-            LeftPanel::Tool(id) => match catalog::group(id).filter(|g| !app.profile.hides_group(g.id)) {
+            LeftPanel::Tool(id) => match catalog::group(id).filter(|g| group_shown(&app.profile, g)) {
                 Some(g) => tool_detail(app, ui, &t, g),
                 None => app.left = LeftPanel::AllTools,
             },
@@ -73,7 +75,7 @@ fn all_tools(app: &mut PdfCraftApp, ui: &mut egui::Ui, t: &Tokens) {
         ui.add_space(2.0);
         // The collapsed list counts the groups the profile shows, so hiding some never pushes the
         // rest behind View more.
-        let visible: Vec<&'static ToolGroup> = TOOL_GROUPS.iter().filter(|g| !app.profile.hides_group(g.id)).collect();
+        let visible: Vec<&'static ToolGroup> = TOOL_GROUPS.iter().filter(|g| group_shown(&app.profile, g)).collect();
         let shown = if app.all_tools_expanded { visible.len() } else { COLLAPSED_TOOLS.min(visible.len()) };
         for g in visible.iter().take(shown) {
             if tool_row(ui, t, g).clicked() {
@@ -186,11 +188,13 @@ fn tool_detail(app: &mut PdfCraftApp, ui: &mut egui::Ui, t: &Tokens, g: &'static
     }
     // Add a stamp: the palette.
     if g.id == "stamp" {
-        stamp_palette(app, ui, t);
+        if offers(&app.profile, "comment.stamp") {
+            stamp_palette(app, ui, t);
+        }
         return;
     }
     // Prepare a form: Preview fills the form as a reader would; Edit goes back.
-    if g.id == "form" {
+    if g.id == "form" && app.profile.allows_feature(Feature::FormDesign) {
         ui.horizontal(|ui| {
             let label = if app.form_preview { "Edit fields" } else { "Preview" };
             if widgets::pill_button(ui, tl!(label), app.form_preview).on_hover_text(tl!("Try the form as people filling it in will see it")).clicked()
@@ -216,7 +220,7 @@ fn tool_detail(app: &mut PdfCraftApp, ui: &mut egui::Ui, t: &Tokens, g: &'static
                 if g.id == "fill_sign" && (item.command.starts_with("sign.fill.signature") || item.command.starts_with("sign.fill.initials")) {
                     continue;
                 }
-                if !app.profile.allows_id(item.command) {
+                if !item_shown(&app.profile, item) {
                     continue;
                 }
                 let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 34.0), Sense::click());
@@ -277,10 +281,14 @@ fn tool_detail(app: &mut PdfCraftApp, ui: &mut egui::Ui, t: &Tokens, g: &'static
                 );
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.add_enabled_ui(marks > 0, |ui| widgets::pill_button(ui, tl!("Redact all"), true)).inner.clicked() {
+                if offers(&app.profile, "redact.apply")
+                    && ui.add_enabled_ui(marks > 0, |ui| widgets::pill_button(ui, tl!("Redact all"), true)).inner.clicked()
+                {
                     run = Some("redact.apply");
                 }
-                if ui.add_enabled_ui(marks > 0, |ui| widgets::pill_button(ui, tl!("Clear all"), false)).inner.clicked() {
+                if offers(&app.profile, "redact.clear")
+                    && ui.add_enabled_ui(marks > 0, |ui| widgets::pill_button(ui, tl!("Clear all"), false)).inner.clicked()
+                {
                     run = Some("redact.clear");
                 }
             });

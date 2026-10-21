@@ -457,6 +457,8 @@ fn drag_preview(
 /// Images on a page: select, move, resize, right-click. Returns `true` when the pointer was used.
 pub(crate) fn image_input(cx: &ImageCx<'_>, images: &[pdfcraft_engine::PageImage], view: &mut DocView, action: &mut Option<ImageAction>) -> bool {
     let ImageCx { ui, resp, xf, ptr, page, info, allow_interaction } = *cx;
+    let offers = super::Offers::get(ui.ctx());
+    let allow_interaction = allow_interaction && offers.edit;
     let boxes: Vec<Rect> = images.iter().map(|im| im.visible_rect.map_or(Rect::NOTHING, |r| xf.user_rect(info, page, r.map(|v| v as f32)))).collect();
     let painter = ui.painter();
     let hover_pos = ptr.pos;
@@ -576,7 +578,7 @@ pub(crate) fn image_input(cx: &ImageCx<'_>, images: &[pdfcraft_engine::PageImage
         && resp.context_menu_opened()
         && ui.ctx().data(|d| d.get_temp::<bool>(menu_key)).unwrap_or(false)
     {
-        resp.context_menu(|ui| image_menu(ui, page, sel, images, view, action));
+        resp.context_menu(|ui| image_menu(ui, page, sel, images, view, action, offers));
         menu_drawn = true;
     }
     let Some(p) = hover_pos.filter(|p| xf.rect.contains(*p)) else { return false };
@@ -600,13 +602,13 @@ pub(crate) fn image_input(cx: &ImageCx<'_>, images: &[pdfcraft_engine::PageImage
         ui.ctx().data_mut(|d| d.insert_temp(menu_key, true));
     }
     if selected == Some(hit) && !menu_drawn {
-        resp.context_menu(|ui| image_menu(ui, page, hit, images, view, action));
+        resp.context_menu(|ui| image_menu(ui, page, hit, images, view, action, offers));
     }
     true
 }
 
 /// The right-click menu of the picture `hit` (its rotate, flip, replace, copy, cut, redact, link,
-/// recognize and delete items).
+/// recognize and delete items), without the items the profile doesn't `offers`.
 fn image_menu(
     ui: &mut egui::Ui,
     page: usize,
@@ -614,6 +616,7 @@ fn image_menu(
     images: &[pdfcraft_engine::PageImage],
     view: &mut DocView,
     action: &mut Option<ImageAction>,
+    offers: super::Offers,
 ) {
     use pdfcraft_engine::ImageEdit as E;
     let items: [(&str, Option<E>); 4] = [
@@ -647,33 +650,33 @@ fn image_menu(
         *action = Some(ImageAction::Replace(page, hit));
         ui.close();
     }
-    if ui.add_enabled(raster, egui::Button::new(tl!("Save Image As…"))).clicked() {
+    if offers.copy && ui.add_enabled(raster, egui::Button::new(tl!("Save Image As…"))).clicked() {
         *action = Some(ImageAction::Save(page, hit));
         ui.close();
     }
     // Cutting and copying also find the picture inside grouped Form artwork.
-    if ui.button(tl!("Cut Image")).clicked() {
+    if offers.copy && ui.button(tl!("Cut Image")).clicked() {
         *action = Some(ImageAction::Cut(page, hit));
         ui.close();
     }
-    if ui.button(tl!("Copy Image")).clicked() {
+    if offers.copy && ui.button(tl!("Copy Image")).clicked() {
         *action = Some(ImageAction::Copy(page, hit));
         ui.close();
     }
-    if ui.button(tl!("Copy Image in Original Format")).clicked() {
+    if offers.copy && ui.button(tl!("Copy Image in Original Format")).clicked() {
         *action = Some(ImageAction::CopyFile(page, hit));
         ui.close();
     }
     ui.separator();
-    if ui.button(tl!("Redact Image")).clicked() {
+    if offers.redact && ui.button(tl!("Redact Image")).clicked() {
         *action = Some(ImageAction::Redact(page, hit));
         ui.close();
     }
-    if ui.button(tl!("Create Link…")).clicked() {
+    if offers.link && ui.button(tl!("Create Link…")).clicked() {
         *action = Some(ImageAction::Link(page, hit));
         ui.close();
     }
-    if ui.button(tl!("Recognize Text…")).clicked() {
+    if offers.recognize && ui.button(tl!("Recognize Text…")).clicked() {
         *action = Some(ImageAction::Recognize(page));
         ui.close();
     }

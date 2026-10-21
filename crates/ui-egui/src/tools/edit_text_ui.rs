@@ -31,6 +31,46 @@ use layout::{color32, editor_galley, editor_job, look_of, luminance, unseen};
 
 const ACCENT: Color32 = Color32::from_rgb(0x14, 0x73, 0xE6);
 
+/// What the profile lets the page's editing input offer. The input code has no app to ask, so
+/// the app publishes this every frame ([`Offers::publish`]); unpublished, everything is offered.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Offers {
+    /// Editing page content: text, images and added content (`editContent`).
+    pub edit: bool,
+    /// Copying images out of the document.
+    pub copy: bool,
+    pub link: bool,
+    pub redact: bool,
+    pub recognize: bool,
+}
+
+impl Offers {
+    const ALL: Self = Self { edit: true, copy: true, link: true, redact: true, recognize: true };
+
+    fn id() -> egui::Id {
+        egui::Id::unique("pdfcraft-profile-offers")
+    }
+
+    pub(crate) fn of(profile: &crate::profile::UiProfile) -> Self {
+        Self {
+            edit: profile.allows_id("edit.edit_text"),
+            copy: profile.allows_id("edit.copy"),
+            link: profile.allows_id("edit.link"),
+            redact: profile.allows_id("redact.mark"),
+            recognize: profile.allows_id("ocr.recognize"),
+        }
+    }
+
+    pub(crate) fn publish(ctx: &egui::Context, profile: &crate::profile::UiProfile) {
+        let offers = Self::of(profile);
+        ctx.data_mut(|d| d.insert_temp(Self::id(), offers));
+    }
+
+    pub(crate) fn get(ctx: &egui::Context) -> Self {
+        ctx.data(|d| d.get_temp(Self::id())).unwrap_or(Self::ALL)
+    }
+}
+
 #[derive(Clone, Copy, PartialEq)]
 enum TextTarget {
     Block(usize),
@@ -335,6 +375,7 @@ fn open_editor(cx: PageToolContext<'_>, lines: &[pdfcraft_engine::TextBlock], bo
 /// `true` when the pointer was used.
 pub(crate) fn page_input(cx: PageToolContext<'_>, lines: &[pdfcraft_engine::TextBlock], view: &mut DocView, allow_interaction: bool) -> bool {
     let PageToolContext { ui, resp, xf, ptr, page, doc, .. } = cx;
+    let allow_interaction = allow_interaction && Offers::get(ui.ctx()).edit;
     let info = &doc.info;
     if view.block_drag.is_some_and(|d| d.generation != doc.edit_generation()) {
         view.block_drag = None;

@@ -1,8 +1,10 @@
 use super::bookmarks::{BmAction, OutlineCtx, outline_item, outline_matches};
+use super::offers;
 use super::pages::{page_tools, pages, thumbnail_size};
 use super::{
     Align, Align2, Color32, DocInfo, FieldKind, Layout, Nav, PdfCraftApp, Rect, RightPanel, Sense, Stroke, Tokens, human_size, icons, theme, vec2,
 };
+use crate::features::Feature;
 
 /// Draw the selected right-hand panel and apply its navigation, layer, bookmark or edit actions.
 pub fn right_panel(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
@@ -23,7 +25,10 @@ pub fn right_panel(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
     let mut a11y_action: Option<crate::a11y_ui::PanelAction> = None;
     let mut compare_action: Option<crate::compare_ui::PanelAction> = None;
     let mut bm_rename = app.bookmark_rename.clone();
-    let bm_editable = app.session.get(id).is_some_and(|d| d.allows_assembly() && d.read_only_reason.is_none());
+    let assembly = app.session.get(id).is_some_and(|d| d.allows_assembly() && d.read_only_reason.is_none());
+    // What the document permits greys out; what the profile refuses doesn't show.
+    let bm_editable = assembly && app.profile.allows_feature(Feature::Bookmarks);
+    let pages_editable = assembly && app.profile.allows_feature(Feature::Pages);
     // Prepare a form is open: the Fields panel orders tabs.
     let preparing = app.is_preparing();
     {
@@ -35,6 +40,7 @@ pub fn right_panel(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
         let a11y = &mut app.a11y;
         let tags_state = &mut app.tags_state;
         let compare = &app.compare;
+        let profile = &app.profile;
         let comment_allowed = doc.allows_annotation();
         // A dialog or the palette owns the keyboard: the panel leaves Escape to it.
         let modal = app.dialog.is_some() || app.palette_open;
@@ -103,11 +109,17 @@ pub fn right_panel(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
                             let more = icons::button(ui, "ellipsis", 26.0, false, tl!("Bookmark options"));
                             egui::Popup::menu(&more).show(|ui| {
                                 ui.set_min_width(200.0);
-                                if bm_editable && ui.button(tl!("New bookmarks from structure")).clicked() {
+                                if bm_editable
+                                    && offers(profile, "bookmark.from_structure")
+                                    && ui.button(tl!("New bookmarks from structure")).clicked()
+                                {
                                     bm_action = Some(BmAction::FromStructure);
                                     ui.close();
                                 }
-                                if bm_editable && ui.button(tl!("New bookmarks from text styles…")).clicked() {
+                                if bm_editable
+                                    && offers(profile, "bookmark.from_text_styles")
+                                    && ui.button(tl!("New bookmarks from text styles…")).clicked()
+                                {
                                     bm_action = Some(BmAction::FromTextStyles);
                                     ui.close();
                                 }
@@ -136,7 +148,11 @@ pub fn right_panel(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
                             });
                         }
                         let new_tip = crate::commands::command_tip(ui.ctx(), tl!("New bookmark ({key})"), "bookmark.add");
-                        if panel == RightPanel::Bookmarks && bm_editable && icons::button(ui, "bookmark-plus", 26.0, false, &new_tip).clicked() {
+                        if panel == RightPanel::Bookmarks
+                            && bm_editable
+                            && offers(profile, "bookmark.add")
+                            && icons::button(ui, "bookmark-plus", 26.0, false, &new_tip).clicked()
+                        {
                             bm_action = Some(BmAction::New);
                         }
                     });
@@ -210,7 +226,7 @@ pub fn right_panel(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
                             ui.label(tl!("Some bookmarks are not shown here: the panel lists a limited number, nested a limited depth."));
                         }
                     }
-                    RightPanel::Pages => pages(ui, &t, info, view, modal, bm_editable, &mut nav),
+                    RightPanel::Pages => pages(ui, &t, info, view, modal, pages_editable, &mut nav),
                     RightPanel::Fields => {
                         field_properties = fields(
                             ui,
