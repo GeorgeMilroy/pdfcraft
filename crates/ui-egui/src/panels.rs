@@ -5,8 +5,28 @@ use egui::{Align, Align2, Color32, CornerRadius, Layout, Rect, Sense, Stroke, po
 use pdfcraft_engine::catalog::{self, Availability, TOOL_GROUPS, ToolGroup, ToolItem};
 use pdfcraft_render::{DocInfo, FieldKind, OutlineItem};
 
+use crate::profile::UiProfile;
 use crate::theme::{self, Tokens};
 use crate::{LeftPanel, PdfCraftApp, RightPanel, icons, widgets};
+
+/// Whether the profile offers command `id`: allowed, and its feature on (comments-only turns off
+/// every feature but the comment ones, whatever a command's permission says).
+pub(crate) fn offers(profile: &UiProfile, id: &str) -> bool {
+    profile.allows_id(id) && crate::features::command_feature(id).is_none_or(|f| profile.allows_feature(f))
+}
+
+/// Whether a catalogue entry shows: [`UiProfile::shows_item`], and its command (or one of its
+/// actions) [`offers`]ed.
+fn item_shown(profile: &UiProfile, item: &catalog::ToolItem) -> bool {
+    profile.shows_item(item) && (offers(profile, item.command) || item.actions.iter().any(|a| offers(profile, a)))
+}
+
+/// Whether a tool group shows: not hidden, its feature on, and at least one entry shown.
+pub(crate) fn group_shown(profile: &UiProfile, g: &ToolGroup) -> bool {
+    profile.shows_group(g)
+        && crate::features::group_feature(g.id).is_none_or(|f| profile.allows_feature(f))
+        && g.sections.iter().flat_map(|s| s.items.iter()).any(|item| item_shown(profile, item))
+}
 
 pub(super) mod all_tools_ui;
 mod bookmarks;

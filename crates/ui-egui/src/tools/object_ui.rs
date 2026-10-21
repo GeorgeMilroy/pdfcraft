@@ -202,7 +202,7 @@ pub(crate) fn page_input(cx: PageToolContext<'_>, view: &mut DocView) -> bool {
     if view.objects.input_blocked {
         return true;
     }
-    if resp.context_menu_opened() || egui::Popup::is_any_open(ui.ctx()) {
+    if !crate::edit_text_ui::Offers::get(ui.ctx()).edit || resp.context_menu_opened() || egui::Popup::is_any_open(ui.ctx()) {
         return false;
     }
     if view.content.draft.is_some() || view.line_editor.as_ref().is_some_and(|e| e.has_changes()) {
@@ -367,7 +367,7 @@ fn on_frame(r: Rect, p: Pos2) -> bool {
 /// The arrow keys move the selected image or objects a point, Shift and an arrow ten points,
 /// as in Acrobat. They are taken before the view turns the page with them.
 pub(crate) fn nudge_keys(ctx: &egui::Context, view: &mut DocView, doc: &Document) {
-    if ctx.egui_wants_keyboard_input() || view.pending_edit.is_some() {
+    if ctx.egui_wants_keyboard_input() || view.pending_edit.is_some() || !crate::edit_text_ui::Offers::get(ctx).edit {
         return;
     }
     let image = view.image_selection.as_ref().filter(|s| !s.dragging()).map(|s| (s.page, s.index));
