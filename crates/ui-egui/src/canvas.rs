@@ -1326,6 +1326,7 @@ struct PageEnv<'a> {
     today: (i64, u32, u32),
     can_paste_image: bool,
     offers: Offers,
+    profile: &'a crate::profile::UiProfile,
 }
 
 /// What the profile ([`crate::profile::UiProfile`]) offers on the page this frame: what it refuses
@@ -1677,7 +1678,7 @@ fn cached_edit_images<'a>(view: &'a mut DocView, doc: &pdfcraft_engine::Document
 }
 
 fn draw_page(ui: &mut egui::Ui, view: &mut DocView, frame: &mut PageFrame<'_>, i: usize) {
-    let PageEnv { allowed, comments_hidden, doc, editing_content, info, ppp, prefs, rects, redact_mark, scale, t, tool, .. } = frame.env;
+    let PageEnv { allowed, comments_hidden, doc, editing_content, info, ppp, prefs, profile, rects, redact_mark, scale, t, tool, .. } = frame.env;
     let PageFrame { ptr, origin, visible, pressed, pointer, .. } = *frame;
     let r = snap_to_pixels(rects[i].translate(origin.to_vec2()), ppp);
     if !r.intersects(visible.expand(400.0)) {
@@ -1714,7 +1715,7 @@ fn draw_page(ui: &mut egui::Ui, view: &mut DocView, frame: &mut PageFrame<'_>, i
     }
 
     let slot = PageSlot { i, r, xf };
-    let pcx = comments::PageCx { page: i, xf: &xf, ptr, info, tool, prefs, allowed, hidden: comments_hidden, redact_mark };
+    let pcx = comments::PageCx { page: i, xf: &xf, ptr, info, tool, prefs, allowed, profile, hidden: comments_hidden, redact_mark };
     // A cancelled press takes nothing until the button is up, though the page's menu still opens
     // where a right-click is.
     let input = if view.press_cancelled {
@@ -1787,6 +1788,7 @@ fn draw_pages(
         visible_pages,
         y_shift,
         offers,
+        profile,
         ..
     } = *env;
     // egui's drag responses accept every pointer button. Keep a wheel gesture from also
@@ -2115,7 +2117,14 @@ fn draw_pages(
             return;
         }
         if view.comments.selected.is_some() {
-            canvas_action = comments::context_menu(ui, view, info, &|page, index| doc.annotation_deletable(page, index), prefs, allowed, can_modify);
+            canvas_action = comments::context_menu(
+                ui,
+                view,
+                info,
+                &|page, index| doc.annotation_deletable(page, index),
+                prefs,
+                comments::MenuGate { profile, allowed, can_copy, can_modify },
+            );
             return;
         }
         // Over a picture (and no comment): Copy Image, as in Acrobat's page menu.
@@ -3158,6 +3167,7 @@ pub fn document_area(app: &mut PdfCraftApp, index: usize, ui: &mut egui::Ui) {
     // Text selection runs for the Select tool and for the markup tools (highlight…).
     let selects_text = tool_selects_text(tool, preparing);
     let prefs = &app.comment_prefs;
+    let profile = &app.profile;
     let redact_mark = (app.redact_prefs.hover_fill, app.redact_prefs.opacity);
     let units = app.units;
     let allowed = doc.allows_annotation();
@@ -3262,6 +3272,7 @@ pub fn document_area(app: &mut PdfCraftApp, index: usize, ui: &mut egui::Ui) {
         today,
         can_paste_image,
         offers,
+        profile,
     };
     let mut page_out = PageOut::default();
     let out = page_scroll(ui, scroll, egui::Id::unique(("page-view-scope", view.id)), app.show_page_edge_shadows, |ui, viewport| {
@@ -3316,7 +3327,7 @@ pub fn document_area(app: &mut PdfCraftApp, index: usize, ui: &mut egui::Ui) {
     // One crop, then back to selecting (as Acrobat does).
     let cropped = view.pending_edit.as_ref().is_some_and(|e| matches!(e, pdfcraft_engine::Edit::SetPageBox { .. }));
     let mut tool = app.quick_tool;
-    comments::keys(ui.ctx(), view, &mut tool, allowed);
+    comments::keys(ui.ctx(), view, info, &mut tool, allowed, &app.profile);
     if preparing {
         crate::prepare::keys(ui.ctx(), view);
     }
@@ -3349,15 +3360,16 @@ pub fn document_area(app: &mut PdfCraftApp, index: usize, ui: &mut egui::Ui) {
     let field_props = field_props.then(|| view.prepare.selected.clone()).flatten();
     match canvas_action {
         Some(comments::CanvasAction::Edit(e)) => view.pending_edit = Some(*e),
-        // `choose_right_panel` would borrow all of `app` while `view` is held; same effect.
-        Some(comments::CanvasAction::OpenComments) => {
+        // `choose_right_panel` would borrow all of `app` while `view` is held; same effect, and
+        // the same refusal of a panel the profile hides.
+        Some(comments::CanvasAction::OpenComments) if app.profile.shows_panel(RightPanel::Comments) => {
             app.right = Some(RightPanel::Comments);
             app.comments_panel_closed = false;
         }
         Some(comments::CanvasAction::Properties(p, i)) => open_props = Some((p, i)),
         Some(comments::CanvasAction::CopyImage(p, i)) => image_action = Some(crate::edit_text_ui::ImageAction::Copy(p, i)),
         Some(comments::CanvasAction::CopyImageFile(p, i)) => image_action = Some(crate::edit_text_ui::ImageAction::CopyFile(p, i)),
-        None => {}
+        Some(comments::CanvasAction::OpenComments) | None => {}
     }
     schedule_presentation_turn(ui, view, present, clicked_link.is_some());
     let remote_open = follow_link(app, index, clicked_link);
