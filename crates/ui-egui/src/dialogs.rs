@@ -1739,6 +1739,10 @@ fn dialog_pin_tool(ui: &mut egui::Ui, app: &mut PdfCraftApp, req: &mut Pending) 
     egui::ScrollArea::vertical().max_height(380.0).auto_shrink([false, true]).show(ui, |ui| {
         let mut toggle = None;
         for g in pdfcraft_engine::catalog::TOOL_GROUPS {
+            // Only the groups the profile shows can be pinned.
+            if !app.shows_tool_group(g.id) {
+                continue;
+            }
             let label = tl!(g.label);
             let blurb = g.sections.first().map(|s| s.items.iter().take(4).map(|i| tl!(i.label)).collect::<Vec<_>>().join(" • ")).unwrap_or_default();
             if !query.is_empty()

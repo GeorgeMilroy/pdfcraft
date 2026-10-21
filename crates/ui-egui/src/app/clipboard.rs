@@ -66,11 +66,18 @@ impl PdfCraftApp {
             self.receive_pastes(i, pastes, false);
             return;
         }
-        let copy = ctx.input(|input| input.events.iter().any(|e| matches!(e, egui::Event::Copy)))
-            || ctx.input_mut(|input| input.consume_shortcut(&KeyboardShortcut::new(Modifiers::COMMAND, Key::C)));
-        let cut = ctx.input(|input| input.events.iter().any(|e| matches!(e, egui::Event::Cut)))
-            || ctx.input_mut(|input| input.consume_shortcut(&KeyboardShortcut::new(Modifiers::COMMAND, Key::X)));
-        let paste = ctx.input_mut(|input| input.consume_shortcut(&KeyboardShortcut::new(Modifiers::COMMAND, Key::V)));
+        // What the profile refuses leaves its key alone: copying needs edit.copy, and cutting or
+        // pasting an image on the page needs image editing too.
+        let images = self.profile.allows_id("edit.image");
+        let copying = self.profile.allows_id("edit.copy");
+        let copy = copying
+            && (ctx.input(|input| input.events.iter().any(|e| matches!(e, egui::Event::Copy)))
+                || ctx.input_mut(|input| input.consume_shortcut(&KeyboardShortcut::new(Modifiers::COMMAND, Key::C))));
+        let cut = copying
+            && images
+            && (ctx.input(|input| input.events.iter().any(|e| matches!(e, egui::Event::Cut)))
+                || ctx.input_mut(|input| input.consume_shortcut(&KeyboardShortcut::new(Modifiers::COMMAND, Key::X))));
+        let paste = images && ctx.input_mut(|input| input.consume_shortcut(&KeyboardShortcut::new(Modifiers::COMMAND, Key::V)));
 
         // Objects selected together in Edit a PDF take ⌘C and ⌘X.
         let objects = (copy || cut) && self.quick_tool == QuickTool::EditText && self.views.get(i).is_some_and(|v| v.objects.count() > 0);
@@ -102,7 +109,7 @@ impl PdfCraftApp {
             return;
         }
         if !pastes.is_empty() {
-            self.receive_pastes(i, pastes, true);
+            self.receive_pastes(i, pastes, images);
             return;
         }
         if paste {

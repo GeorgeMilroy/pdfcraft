@@ -83,8 +83,11 @@ pub fn show(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
                     .font(theme::regular(14.0)),
             );
             ui.add_space(14.0);
-            // A white-label brand may leave the community out (crate::brand).
-            if crate::brand::current().community_links && !app.community_card_closed {
+            // A white-label brand may leave the community out (crate::brand), and so may a profile.
+            if crate::brand::current().community_links
+                && !app.community_card_closed
+                && pdfcraft_engine::links::LINKS.iter().any(|l| app.profile.allows_id(l.command))
+            {
                 egui::Frame::NONE
                     .fill(t.card)
                     .stroke(Stroke::new(1.0, t.border))
@@ -113,87 +116,110 @@ pub fn show(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
                 ui.add_space(22.0);
             }
 
-            egui::Frame::NONE
-                .fill(t.card)
-                .stroke(Stroke::new(1.0, t.border))
-                .corner_radius(CornerRadius::same(12))
-                .inner_margin(egui::Margin::same(18))
-                .show(ui, |ui| {
-                    ui.set_width(ui.available_width());
-                    ui.label(egui::RichText::new(tl!("Recommended tools")).font(theme::semibold(15.0)));
-                    ui.add_space(10.0);
-                    ui.horizontal_wrapped(|ui| {
-                        ui.spacing_mut().item_spacing = vec2(14.0, 14.0);
-                        for id in RECOMMENDED {
-                            if app.is_tool_pinned(id) {
-                                continue;
-                            }
-                            let Some(g) = catalog::group(id).filter(|g| !app.profile.hides_group(g.id)) else { continue };
-                            tool_card(app, ui, &t, g, false);
+            let groups: Vec<&'static catalog::ToolGroup> = RECOMMENDED
+                .iter()
+                .filter(|id| !app.is_tool_pinned(id))
+                .filter_map(|id| catalog::group(id))
+                .filter(|g| app.shows_tool_group(g.id))
+                .collect();
+            let open_file = app.profile.allows_id("file.open");
+            if !groups.is_empty() || open_file {
+                egui::Frame::NONE
+                    .fill(t.card)
+                    .stroke(Stroke::new(1.0, t.border))
+                    .corner_radius(CornerRadius::same(12))
+                    .inner_margin(egui::Margin::same(18))
+                    .show(ui, |ui| {
+                        ui.set_width(ui.available_width());
+                        if !groups.is_empty() {
+                            ui.label(egui::RichText::new(tl!("Recommended tools")).font(theme::semibold(15.0)));
+                            ui.add_space(10.0);
                         }
-                        let (rect, resp) = ui.allocate_exact_size(vec2(170.0, 104.0), Sense::click());
-                        resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, tl!("Open file")));
-                        let press = theme::Press::track(ui, &resp);
-                        card_lift(ui, &t, rect, press);
-                        ui.painter().rect(
-                            rect,
-                            CornerRadius::same(10),
-                            press.fill(t.pasteboard, t.hover, t.pressed),
-                            Stroke::new(1.0, t.divider),
-                            egui::StrokeKind::Inside,
-                        );
-                        let body = rect.translate(press.offset());
-                        icons::paint(ui, Rect::from_center_size(body.center() - vec2(0.0, 16.0), vec2(28.0, 28.0)), "folder-open", 26.0, t.icon);
-                        ui.painter().text(body.center() + vec2(0.0, 22.0), Align2::CENTER_CENTER, tl!("Open file"), theme::semibold(13.0), t.text);
-                        if theme::hand(resp).clicked() {
-                            app.open_dialog();
+                        ui.horizontal_wrapped(|ui| {
+                            ui.spacing_mut().item_spacing = vec2(14.0, 14.0);
+                            for g in groups {
+                                tool_card(app, ui, &t, g, false);
+                            }
+                            if !open_file {
+                                return;
+                            }
+                            let (rect, resp) = ui.allocate_exact_size(vec2(170.0, 104.0), Sense::click());
+                            resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, tl!("Open file")));
+                            let press = theme::Press::track(ui, &resp);
+                            card_lift(ui, &t, rect, press);
+                            ui.painter().rect(
+                                rect,
+                                CornerRadius::same(10),
+                                press.fill(t.pasteboard, t.hover, t.pressed),
+                                Stroke::new(1.0, t.divider),
+                                egui::StrokeKind::Inside,
+                            );
+                            let body = rect.translate(press.offset());
+                            icons::paint(ui, Rect::from_center_size(body.center() - vec2(0.0, 16.0), vec2(28.0, 28.0)), "folder-open", 26.0, t.icon);
+                            ui.painter().text(
+                                body.center() + vec2(0.0, 22.0),
+                                Align2::CENTER_CENTER,
+                                tl!("Open file"),
+                                theme::semibold(13.0),
+                                t.text,
+                            );
+                            if theme::hand(resp).clicked() {
+                                app.open_dialog();
+                            }
+                        });
+                    });
+            }
+
+            // Pinned tools show only while the profile shows a tool group to pin.
+            let pinnable = catalog::TOOL_GROUPS.iter().any(|g| app.shows_tool_group(g.id));
+            let mut unpin_tool = None;
+            if pinnable {
+                ui.add_space(26.0);
+                ui.horizontal(|ui| {
+                    ui.label(egui::RichText::new(tl!("Pinned Tools")).font(theme::semibold(17.0)));
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        if app.profile.allows_id("app.preferences") && widgets::ghost_button(ui, "pin", tl!("Pin a tool…")).clicked() {
+                            app.dialog = Some(crate::Dialog::PinTool);
                         }
                     });
                 });
-
-            ui.add_space(26.0);
-            let mut unpin_tool = None;
-            ui.horizontal(|ui| {
-                ui.label(egui::RichText::new(tl!("Pinned Tools")).font(theme::semibold(17.0)));
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    if widgets::ghost_button(ui, "pin", tl!("Pin a tool…")).clicked() {
-                        app.dialog = Some(crate::Dialog::PinTool);
-                    }
-                });
-            });
-            ui.add_space(4.0);
-            if app.pinned_tools.is_empty() {
-                ui.label(egui::RichText::new(tl!("Pin your favorite tools here for quick access.")).color(t.text_muted));
-            } else {
-                ui.add_space(6.0);
-                let pinned = app.pinned_tools.clone();
-                ui.horizontal_wrapped(|ui| {
-                    ui.spacing_mut().item_spacing = vec2(14.0, 14.0);
-                    for id in &pinned {
-                        let Some(g) = catalog::group(id).filter(|g| !app.profile.hides_group(g.id)) else { continue };
-                        if let Some(to_unpin) = tool_card(app, ui, &t, g, true) {
-                            unpin_tool = Some(to_unpin);
+                ui.add_space(4.0);
+                if app.pinned_tools.is_empty() {
+                    ui.label(egui::RichText::new(tl!("Pin your favorite tools here for quick access.")).color(t.text_muted));
+                } else {
+                    ui.add_space(6.0);
+                    let pinned = app.pinned_tools.clone();
+                    ui.horizontal_wrapped(|ui| {
+                        ui.spacing_mut().item_spacing = vec2(14.0, 14.0);
+                        for id in &pinned {
+                            let Some(g) = catalog::group(id).filter(|g| app.shows_tool_group(g.id)) else { continue };
+                            if let Some(to_unpin) = tool_card(app, ui, &t, g, true) {
+                                unpin_tool = Some(to_unpin);
+                            }
                         }
-                    }
-                });
+                    });
+                }
             }
             if let Some(id) = unpin_tool {
                 app.unpin_tool(id);
             }
 
+            // Pinned folders open their files.
             #[cfg(not(target_arch = "wasm32"))]
-            {
+            if app.profile.allows_id("file.pin_folder") && app.profile.allows_id("file.open") {
                 ui.add_space(26.0);
                 crate::folders_ui::section(app, ui);
             }
 
+            // Recent files are opened from Home, so they go with opening files.
+            let recent = app.profile.allows_id("file.open_recent");
             let mut clear = false;
             // Preferences can turn the list off (#5572).
-            if app.recent_limit > 0 {
+            if recent && app.recent_limit > 0 {
                 ui.add_space(26.0);
                 ui.horizontal(|ui| {
                     ui.label(egui::RichText::new(tl!("Recent")).font(theme::semibold(17.0)));
-                    if !app.recent.is_empty() {
+                    if !app.recent.is_empty() && app.profile.allows_id("file.clear_recent") {
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             let resp = widgets::ghost_button(ui, "trash-2", tl!("Clear"));
                             resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, tl!("Clear Recent Files")));
@@ -208,7 +234,7 @@ pub fn show(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
             }
             let mut open = None;
             let mut remove = None;
-            for r in app.recent.iter().take(app.recent_limit) {
+            for r in app.recent.iter().filter(|_| recent).take(app.recent_limit) {
                 let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 46.0), Sense::click());
                 resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, &r.name));
                 let press = theme::Press::track(ui, &resp);

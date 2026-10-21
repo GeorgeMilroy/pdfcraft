@@ -322,7 +322,8 @@ fn core_tool_buttons(ui: &mut egui::Ui, app: &mut PdfCraftApp, cell: f32, popup_
     let open = (resp.clicked() && current_fill.is_some()) || resp.secondary_clicked();
     egui::Popup::menu(&resp).open_memory(open.then_some(egui::SetOpenCommand::Toggle)).align(popup_align).gap(6.0).show(|ui| {
         for tool in crate::fill_sign::FILL_TOOLS {
-            if matches!(tool, crate::fill_sign::FillTool::Signature | crate::fill_sign::FillTool::Initials) || !app.profile.allows_id(tool.command()) {
+            if matches!(tool, crate::fill_sign::FillTool::Signature | crate::fill_sign::FillTool::Initials) || !app.profile.allows_id(tool.command())
+            {
                 continue;
             }
             let on = current_fill == Some(tool);
