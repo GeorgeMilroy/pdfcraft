@@ -16,6 +16,46 @@ use crate::page_pointer::PagePointer;
 
 const ACCENT: Color32 = Color32::from_rgb(0x14, 0x73, 0xE6);
 
+/// What the profile lets the page's editing input offer. The input code has no app to ask, so
+/// the app publishes this every frame ([`Offers::publish`]); unpublished, everything is offered.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct Offers {
+    /// Editing page content: text, images and added content (`editContent`).
+    pub edit: bool,
+    /// Copying images out of the document.
+    pub copy: bool,
+    pub link: bool,
+    pub redact: bool,
+    pub recognize: bool,
+}
+
+impl Offers {
+    const ALL: Self = Self { edit: true, copy: true, link: true, redact: true, recognize: true };
+
+    fn id() -> egui::Id {
+        egui::Id::new("pdfcraft-profile-offers")
+    }
+
+    pub(crate) fn of(profile: &crate::profile::UiProfile) -> Self {
+        Self {
+            edit: profile.allows_id("edit.edit_text"),
+            copy: profile.allows_id("edit.copy"),
+            link: profile.allows_id("edit.link"),
+            redact: profile.allows_id("redact.mark"),
+            recognize: profile.allows_id("ocr.recognize"),
+        }
+    }
+
+    pub(crate) fn publish(ctx: &egui::Context, profile: &crate::profile::UiProfile) {
+        let offers = Self::of(profile);
+        ctx.data_mut(|d| d.insert_temp(Self::id(), offers));
+    }
+
+    pub(crate) fn get(ctx: &egui::Context) -> Self {
+        ctx.data(|d| d.get_temp(Self::id())).unwrap_or(Self::ALL)
+    }
+}
+
 #[derive(Clone, Copy, PartialEq)]
 enum TextTarget {
     Block(usize),
@@ -813,6 +853,8 @@ pub(crate) fn image_input(
     action: &mut Option<ImageAction>,
     allow_interaction: bool,
 ) -> bool {
+    let offers = Offers::get(ui.ctx());
+    let allow_interaction = allow_interaction && offers.edit;
     let boxes: Vec<Rect> = images.iter().map(|im| im.visible_rect.map_or(Rect::NOTHING, |r| xf.user_rect(info, page, r.map(|v| v as f32)))).collect();
     let painter = ui.painter();
     let hover_pos = ptr.pos;
@@ -1051,7 +1093,7 @@ pub(crate) fn image_input(
         && resp.context_menu_opened()
         && ui.ctx().data(|d| d.get_temp::<bool>(menu_key)).unwrap_or(false)
     {
-        resp.context_menu(|ui| image_menu(ui, page, sel, images, view, action));
+        resp.context_menu(|ui| image_menu(ui, page, sel, images, view, action, offers));
         menu_drawn = true;
     }
     let Some(p) = hover_pos.filter(|p| xf.rect.contains(*p)) else { return false };
@@ -1074,13 +1116,13 @@ pub(crate) fn image_input(
         ui.ctx().data_mut(|d| d.insert_temp(menu_key, true));
     }
     if selected == Some(hit) && !menu_drawn {
-        resp.context_menu(|ui| image_menu(ui, page, hit, images, view, action));
+        resp.context_menu(|ui| image_menu(ui, page, hit, images, view, action, offers));
     }
     true
 }
 
 /// The right-click menu of the picture `hit` (its rotate, flip, replace, copy, cut, redact, link,
-/// recognize and delete items).
+/// recognize and delete items), without the items the profile doesn't `offers`.
 fn image_menu(
     ui: &mut egui::Ui,
     page: usize,
@@ -1088,6 +1130,7 @@ fn image_menu(
     images: &[pdfcraft_engine::PageImage],
     view: &mut DocView,
     action: &mut Option<ImageAction>,
+    offers: Offers,
 ) {
     use pdfcraft_engine::ImageEdit as E;
     let items: [(&str, Option<E>); 4] = [
@@ -1121,33 +1164,33 @@ fn image_menu(
         *action = Some(ImageAction::Replace(page, hit));
         ui.close();
     }
-    if ui.add_enabled(raster, egui::Button::new(tl!("Save Image As…"))).clicked() {
+    if offers.copy && ui.add_enabled(raster, egui::Button::new(tl!("Save Image As…"))).clicked() {
         *action = Some(ImageAction::Save(page, hit));
         ui.close();
     }
     // Cutting and copying also find the picture inside grouped Form artwork.
-    if ui.button(tl!("Cut Image")).clicked() {
+    if offers.copy && ui.button(tl!("Cut Image")).clicked() {
         *action = Some(ImageAction::Cut(page, hit));
         ui.close();
     }
-    if ui.button(tl!("Copy Image")).clicked() {
+    if offers.copy && ui.button(tl!("Copy Image")).clicked() {
         *action = Some(ImageAction::Copy(page, hit));
         ui.close();
     }
-    if ui.button(tl!("Copy Image in Original Format")).clicked() {
+    if offers.copy && ui.button(tl!("Copy Image in Original Format")).clicked() {
         *action = Some(ImageAction::CopyFile(page, hit));
         ui.close();
     }
     ui.separator();
-    if ui.button(tl!("Redact Image")).clicked() {
+    if offers.redact && ui.button(tl!("Redact Image")).clicked() {
         *action = Some(ImageAction::Redact(page, hit));
         ui.close();
     }
-    if ui.button(tl!("Create Link…")).clicked() {
+    if offers.link && ui.button(tl!("Create Link…")).clicked() {
         *action = Some(ImageAction::Link(page, hit));
         ui.close();
     }
-    if ui.button(tl!("Recognize Text…")).clicked() {
+    if offers.recognize && ui.button(tl!("Recognize Text…")).clicked() {
         *action = Some(ImageAction::Recognize(page));
         ui.close();
     }
@@ -1222,6 +1265,7 @@ pub(crate) fn page_input(
     view: &mut DocView,
     allow_interaction: bool,
 ) -> bool {
+    let allow_interaction = allow_interaction && Offers::get(ui.ctx()).edit;
     let info = &doc.info;
     if view.block_drag.is_some_and(|d| d.generation != doc.edit_generation()) {
         view.block_drag = None;
