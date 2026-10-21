@@ -149,10 +149,10 @@ pub(crate) fn page(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
             }
             group(ui, &t, edge, 2.0 * 30.0 + 6.0);
             let (undo, redo) = (!app.combine_tab.undo.is_empty(), !app.combine_tab.redo.is_empty());
-            if tool(ui, undo, "undo-2", tl!("Undo"), tl!("Nothing to undo")).clicked() {
+            if app.profile.allows_id("edit.undo") && tool(ui, undo, "undo-2", tl!("Undo"), tl!("Nothing to undo")).clicked() {
                 app.execute("edit.undo");
             }
-            if tool(ui, redo, "redo-2", tl!("Redo"), tl!("Nothing to redo")).clicked() {
+            if app.profile.allows_id("edit.redo") && tool(ui, redo, "redo-2", tl!("Redo"), tl!("Nothing to redo")).clicked() {
                 app.execute("edit.redo");
             }
             group(ui, &t, edge, 2.0 * 30.0 + 6.0);

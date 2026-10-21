@@ -48,7 +48,12 @@ impl PdfCraftApp {
     /// The document whose page grid is showing and may take pages, if any.
     fn grid_target(&self) -> Option<pdfcraft_engine::DocId> {
         let view = self.active.and_then(|i| self.views.get(i)).filter(|v| v.organize)?;
-        (self.dialog.is_none() && self.session.get(view.id)?.allows_assembly()).then_some(view.id)
+        (self.dialog.is_none() && self.allows_page_drop() && self.session.get(view.id)?.allows_assembly()).then_some(view.id)
+    }
+
+    /// Whether the profile lets dropped files be inserted as pages.
+    fn allows_page_drop(&self) -> bool {
+        self.profile.allows_feature(crate::features::Feature::Pages) && self.profile.allows_id("page.insert")
     }
 
     /// The document whose Pages panel is under the pointer and may take pages, if any.
@@ -57,7 +62,7 @@ impl PdfCraftApp {
         let view = self.active.and_then(|i| self.views.get(i))?;
         let pointer = ctx.input(|i| i.pointer.hover_pos())?;
         let over = view.pages_panel.is_some_and(|panel| panel.contains(pointer));
-        (over && self.dialog.is_none() && self.session.get(view.id)?.allows_assembly()).then_some(view.id)
+        (over && self.dialog.is_none() && self.allows_page_drop() && self.session.get(view.id)?.allows_assembly()).then_some(view.id)
     }
 
     /// Files dropped on the Pages panel, or while the page grid shows, are inserted into the

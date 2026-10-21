@@ -275,12 +275,9 @@ impl PdfCraftApp {
     /// that is the [`Gate`]'s job ([`PdfCraftApp::menu_gate`]).
     pub fn menu_bar(&self, ctx: &egui::Context) -> MenuBar {
         let mut used: Vec<&str> = Vec::new();
-        // A white-label brand may leave the community links out of Help (crate::brand).
-        let community = crate::brand::current().community_links;
         let list = |ids: &[&'static str], used: &mut Vec<&'static str>| -> Vec<Node> {
             ids.iter()
-                .filter(|&&id| community || pdfcraft_engine::links::for_command(id).is_none())
-                .filter(|&&id| self.menu_allows(id))
+                .filter(|&&id| id == SEP || self.menu_allows(id))
                 .map(|&id| {
                     if id == SEP {
                         return Node::Separator;
@@ -329,6 +326,7 @@ impl PdfCraftApp {
         let mut sign = vec![Node::submenu(
             tl!("Fill & Sign"),
             FILL.iter()
+                .filter(|&&(id, _)| self.menu_allows(id))
                 .map(|&(id, label)| {
                     used.push(id);
                     self.menu_item(id, Some(tl!(label)))
@@ -350,6 +348,7 @@ impl PdfCraftApp {
             tl!("Side panels"),
             PANELS
                 .iter()
+                .filter(|(panel, ..)| self.profile.shows_panel(*panel))
                 .map(|(_, name, label)| {
                     Item::new(CommandRef::with_params(PANEL, serde_json::json!({ "panel": name })), tl!(label)).radio(false).into()
                 })
@@ -373,19 +372,22 @@ impl PdfCraftApp {
             ],
             documents: self.menu_documents(),
         };
+        // A menu the profile leaves empty goes; Window keeps the open documents.
+        bar.menus.retain(|m| !m.children.is_empty() || (m.role == MenuRole::Window && !bar.documents.is_empty()));
         bar.tag_item(&CommandRef::new("help.about"), ItemRole::About);
         bar.tag_item(&CommandRef::new("app.preferences"), ItemRole::Settings);
         craft_menu::apply_state(&mut bar, |command| self.menu_state(ctx, command));
         bar
     }
 
-    /// Whether the profile ([`crate::profile::UiProfile`]) lets a menu item show. Menu-only items
-    /// follow what they do: Cut and Paste are the page grid's, Delete removes what is selected
-    /// (each removal is checked again where it happens), and the zoom and view rotation keys
-    /// belong to the viewer.
+    /// Whether the profile ([`crate::profile::UiProfile`]) lets a menu item show, and the brand
+    /// its community links. Menu-only items follow what they do: Cut and Paste are the page
+    /// grid's, Delete removes what is selected (each removal is checked again where it happens),
+    /// and the zoom and view rotation keys belong to the viewer.
     fn menu_allows(&self, id: &str) -> bool {
         let profile = &self.profile;
-        if profile.hides(id) {
+        // A white-label brand may leave the community links out of Help (crate::brand).
+        if profile.hides(id) || (!crate::brand::current().community_links && pdfcraft_engine::links::for_command(id).is_some()) {
             return false;
         }
         match id {
@@ -393,8 +395,15 @@ impl PdfCraftApp {
             PASTE => profile.allows_id("page.paste"),
             DELETE => !profile.read_only && profile.features.is_none_or(|f| f.edits()),
             NO_RECENT => profile.allows_id("file.open_recent"),
-            SELECT_ALL | ACTUAL_SIZE | PAGE_LEVEL | FIT_WIDTH | FIT_HEIGHT | ZOOM_IN | ZOOM_OUT | ROTATE_CW | ROTATE_CCW => true,
-            id => profile.allows_id(id),
+            SELECT_ALL => true,
+            // The zoom and page navigation items go with the rail's controls (`ui:rail_zoom`,
+            // `ui:rail_page_nav`).
+            ACTUAL_SIZE | PAGE_LEVEL | FIT_WIDTH | FIT_HEIGHT | ZOOM_IN | ZOOM_OUT | ROTATE_CW | ROTATE_CCW => {
+                profile.shows_part(crate::profile::parts::RAIL_ZOOM)
+            }
+            "view.fit_visible" => profile.shows_part(crate::profile::parts::RAIL_ZOOM) && self.shows_command(id),
+            "view.previous_view" | "view.next_view" => profile.shows_part(crate::profile::parts::RAIL_PAGE_NAV) && self.shows_command(id),
+            id => self.shows_command(id),
         }
     }
 
@@ -432,7 +441,7 @@ impl PdfCraftApp {
             .collect();
         if items.is_empty() {
             items.push(self.menu_item(NO_RECENT, None));
-        } else {
+        } else if self.menu_allows("file.clear_recent") {
             items.push(Node::Separator);
             items.push(self.menu_item("file.clear_recent", Some(tl!("Clear Recent Files"))));
         }
@@ -445,7 +454,7 @@ impl PdfCraftApp {
     fn tools_menu(&self, used: &[&str]) -> Vec<Node> {
         TOOL_GROUPS
             .iter()
-            .filter(|g| g.availability == Availability::Ready)
+            .filter(|g| g.availability == Availability::Ready && self.shows_tool_group(g.id))
             .map(|group| {
                 let mut nodes = Vec::new();
                 let mut seen: Vec<&str> = Vec::new();
@@ -454,7 +463,7 @@ impl PdfCraftApp {
                     for tool in section.items.iter().filter(|t| t.availability == Availability::Ready) {
                         let actions: &[&'static str] = if tool.actions.is_empty() { std::slice::from_ref(&tool.command) } else { tool.actions };
                         for &id in actions {
-                            if commands::command(id).is_none() || used.contains(&id) || seen.contains(&id) {
+                            if commands::command(id).is_none() || used.contains(&id) || seen.contains(&id) || !self.menu_allows(id) {
                                 continue;
                             }
                             seen.push(id);

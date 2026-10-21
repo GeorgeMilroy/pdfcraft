@@ -259,11 +259,12 @@ impl PdfCraftApp {
     }
 
     /// Fields are being edited (Prepare a form or its Calculation order is open, or a field tool
-    /// is picked), unless the form is being previewed.
+    /// is picked), unless the form is being previewed, and the profile lets forms be designed.
     pub fn is_preparing(&self) -> bool {
         ((self.left_open && matches!(self.left, LeftPanel::Tool("form") | LeftPanel::CalculationOrder))
             || matches!(self.quick_tool, QuickTool::Field(_)))
             && !self.form_preview
+            && self.profile.allows_feature(features::Feature::FormDesign)
     }
 
     /// A number that changes whenever the open dialog changes (opened, closed or replaced by
@@ -373,6 +374,9 @@ impl eframe::App for PdfCraftApp {
                 self.quick_tool = QuickTool::Select;
             }
         }
+        // Whatever set it (the control channel, a host assigning the profile), nothing the
+        // profile refuses stays open or armed.
+        self.enforce_profile();
         #[cfg(not(target_arch = "wasm32"))]
         {
             if let Some(worker) = &self.open_worker {
@@ -420,7 +424,7 @@ impl eframe::App for PdfCraftApp {
         #[cfg(not(target_arch = "wasm32"))]
         let dropped = self.drop_on_grid(dropped, ctx);
         for f in dropped {
-            if self.profile.hides("file.open") {
+            if !self.profile.allows_id("file.open") {
                 continue;
             }
             // Files dropped on the Combine files tab join its list instead of opening.

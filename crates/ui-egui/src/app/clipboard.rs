@@ -26,7 +26,7 @@ impl PdfCraftApp {
     pub(super) fn copy_key(&mut self, i: usize, ctx: &egui::Context) {
         // ⌘C arrives as a Copy event on most platforms.
         let copy = ctx.input(|input| input.events.iter().any(|e| matches!(e, egui::Event::Copy)));
-        if !copy || ctx.egui_wants_keyboard_input() {
+        if !copy || ctx.egui_wants_keyboard_input() || !self.profile.allows_id("edit.copy") {
             return;
         }
         self.copy_selected_text(i, ctx);

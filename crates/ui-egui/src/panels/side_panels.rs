@@ -276,8 +276,18 @@ pub fn state(app: &PdfCraftApp) -> Value {
     })
 }
 
+/// Whether a panel command only does what a locked layout
+/// ([`crate::profile::UiProfile::lock_layout`]) still allows: open a pane and resize it, but not
+/// close it or reset the layout.
+fn allowed_when_locked(reset: bool, params: &Value) -> bool {
+    !reset && params.get("open").and_then(Value::as_bool) != Some(false)
+}
+
 /// `ui.panel {panel, open?, width?}` and `ui.dock.reset` (`reset`).
 pub fn command(app: &mut PdfCraftApp, reset: bool, params: &Value) -> Result<Value, String> {
+    if app.profile.lock_layout && !allowed_when_locked(reset, params) {
+        return Err("The panel layout is locked".into());
+    }
     if reset {
         app.side_panels = SidePanels::default();
         app.left_open = true;
@@ -357,8 +367,9 @@ fn state_of(panels: &SidePanels, pane: Pane) -> PaneState {
 /// The panes that show this frame, outermost first on a shared edge.
 fn open_panes(app: &PdfCraftApp) -> Vec<Pane> {
     let mut open = Vec::new();
-    // Read mode hides the tools, not the navigation panes.
-    if app.left_open && app.mode != Mode::Read {
+    // Read mode hides the tools, not the navigation panes; the profile may hide the tools too
+    // (their open state is kept for when they show again).
+    if app.left_open && app.mode != Mode::Read && app.profile.shows_part(crate::profile::parts::TOOLS_PANEL) {
         open.push(Pane::Tools);
     }
     // Home and Combine files have no side panel; the choice is kept for the next document.

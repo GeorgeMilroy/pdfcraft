@@ -14,6 +14,7 @@ impl PdfCraftApp {
     ///
     /// This is the seed of the UI control channel (M3.9): the same verbs become `ui.set` calls.
     pub fn set_option(&mut self, key: &str, value: &str) -> Result<(), String> {
+        let organize = self.shows_command("page.organize");
         let view = self.active.and_then(|i| self.views.get_mut(i));
         match (key, view) {
             ("language", _) => {
@@ -39,7 +40,7 @@ impl PdfCraftApp {
                 self.animation_effects = motion::AnimationEffects::parse(value).ok_or("animation_effects must be system, on, or off")?;
             }
             ("panel", _) => {
-                self.right = match value {
+                let panel = match value {
                     "comments" => Some(RightPanel::Comments),
                     "bookmarks" => Some(RightPanel::Bookmarks),
                     "pages" => Some(RightPanel::Pages),
@@ -53,7 +54,11 @@ impl PdfCraftApp {
                     "compare" => Some(RightPanel::Compare),
                     "none" => None,
                     other => return Err(format!("unknown panel {other}")),
+                };
+                if panel.is_some_and(|p| !self.profile.shows_panel(p)) {
+                    return Err(format!("the profile doesn't allow the {value} panel"));
                 }
+                self.right = panel;
             }
             ("mode", _) => {
                 let mode = Mode::parse(value).unwrap_or(Mode::AllTools);
@@ -71,7 +76,9 @@ impl PdfCraftApp {
             ("date-language", _) => self.session.set_date_language(Some(value).filter(|v| *v != "auto"))?,
             ("tool", _) => {
                 let g = pdfcraft_engine::catalog::group(value).ok_or_else(|| format!("unknown tool {value}"))?;
-                self.select_tool(g.id);
+                if !self.select_tool(g.id) {
+                    return Err(format!("the profile doesn't allow the {value} tool"));
+                }
             }
             ("left", _) => self.left_open = value != "closed",
             ("home", _) => {
@@ -81,6 +88,14 @@ impl PdfCraftApp {
                 self.all_tools_full = false;
             }
             ("dialog", _) => {
+                let wanted = match value {
+                    "sign" | "certify" => Some(Dialog::Sign),
+                    "number-pages" => Some(Dialog::NumberPages),
+                    _ => None,
+                };
+                if wanted.and_then(Dialog::command).is_some_and(|id| !self.profile.allows_id(id)) {
+                    return Err(format!("the profile doesn't allow the {value} dialog"));
+                }
                 self.dialog = match value {
                     "properties" => Some(Dialog::Properties(PropsTab::Description)),
                     "security" => Some(Dialog::Properties(PropsTab::Security)),
@@ -127,6 +142,10 @@ impl PdfCraftApp {
                     }
                     "none" => None,
                     _ => Some(Dialog::About),
+                };
+                if self.dialog.and_then(Dialog::command).is_some_and(|id| !self.profile.allows_id(id)) {
+                    self.dialog = None;
+                    return Err(format!("the profile doesn't allow the {value} dialog"));
                 }
             }
             ("tools", _) if value == "full" => self.expand_all_tools(),
@@ -135,6 +154,9 @@ impl PdfCraftApp {
                 self.all_tools_expanded = value != "collapsed";
             }
             ("palette", _) => {
+                if !self.shows_command("view.palette") {
+                    return Err("the profile doesn't allow the palette".into());
+                }
                 self.palette_open = true;
                 self.palette_query = value.to_string();
             }
@@ -208,6 +230,8 @@ impl PdfCraftApp {
             ("organize", Some(v)) => {
                 if value == "off" {
                     v.organize = false;
+                } else if !organize {
+                    return Err("the profile doesn't allow the page grid".into());
                 } else {
                     v.open_organize();
                 }
@@ -266,7 +290,7 @@ impl PdfCraftApp {
             ("notice", Some(v)) => v.notice_dismissed = value == "off",
             ("quick", _) => {
                 // `--quick select|hand|note|freetext|highlight|underline|strikeout|ink|line|arrow|square|circle`
-                self.quick_tool = match value {
+                let tool = match value {
                     "select" => QuickTool::Select,
                     measure if measure.starts_with("measure-") => QuickTool::Measure(
                         measure_ui::Tool::from_name(measure.trim_start_matches("measure-")).ok_or_else(|| format!("unknown tool {measure}"))?,
@@ -304,10 +328,17 @@ impl PdfCraftApp {
                     ),
                     other => {
                         let t = comments::CommentTool::from_command(&format!("comment.{other}")).ok_or_else(|| format!("unknown tool {other}"))?;
+                        if !self.profile.allows_id(t.command()) {
+                            return Err(format!("the profile doesn't allow the {value} tool"));
+                        }
                         self.comment_prefs.group_tool[t.group()] = t;
                         QuickTool::Comment(t)
                     }
                 };
+                if tool.command().is_some_and(|id| !self.profile.allows_id(id)) {
+                    return Err(format!("the profile doesn't allow the {value} tool"));
+                }
+                self.quick_tool = tool;
             }
             ("author", _) => self.comment_prefs.author = value.to_string(),
             ("comment-tool-pinned", _) => {

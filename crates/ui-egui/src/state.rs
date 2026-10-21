@@ -23,6 +23,16 @@ impl Mode {
             _ => None,
         }
     }
+
+    /// The tool group the workspace opens on, if it has its own.
+    pub(crate) fn tool_group(self) -> Option<&'static str> {
+        match self {
+            Self::Edit => Some("edit"),
+            Self::Convert => Some("export"),
+            Self::Sign => Some("fill_sign"),
+            Self::AllTools | Self::Read => None,
+        }
+    }
 }
 
 /// What the left panel shows.
@@ -93,6 +103,41 @@ pub enum QuickTool {
     /// Edit ▸ Column Select: drag a rectangle to select only the text inside it (#740). The
     /// Select tool does the same while Alt/Option is held at the start of a drag.
     ColumnSelect,
+}
+
+impl QuickTool {
+    /// The command that arms the tool, which the profile must allow; `None` for Select and Hand.
+    pub(crate) fn command(self) -> Option<&'static str> {
+        Some(match self {
+            Self::Select | Self::Hand => return None,
+            Self::Comment(t) => t.command(),
+            Self::Measure(t) => match t {
+                measure_ui::Tool::Distance => "measure.distance",
+                measure_ui::Tool::Perimeter => "measure.perimeter",
+                measure_ui::Tool::Area => "measure.area",
+                measure_ui::Tool::Calibrate => "measure.scale",
+            },
+            Self::Crop => "page.crop",
+            Self::EnhanceCamera => "ocr.enhance_camera",
+            Self::Fill(t) => t.command(),
+            Self::Field(t) => t.command(),
+            Self::Redact => "redact.mark",
+            Self::AddText => "edit.text",
+            Self::EditText => "edit.edit_text",
+            Self::Stamp(_) | Self::CustomStamp(_) => "comment.stamp",
+            Self::Link => "edit.link",
+            Self::SignArea { certify } => {
+                if certify {
+                    "sign.certify"
+                } else {
+                    "sign.digital"
+                }
+            }
+            Self::MarqueeZoom => "view.marquee_zoom",
+            Self::Snapshot => "edit.snapshot",
+            Self::ColumnSelect => "edit.column_select",
+        })
+    }
 }
 
 /// A file dropped on a page grid: its name, and its bytes or, for a file on disk, the path they are
@@ -186,6 +231,64 @@ pub enum Dialog {
     AuditSpace,
     /// Signatures ▸ Show certificate.
     CertificateViewer,
+}
+
+impl Dialog {
+    /// The command whose dialog this is, which the profile must allow; `None` for dialogs that
+    /// finish what the app already started (recovery, overwriting a changed file).
+    pub(crate) fn command(self) -> Option<&'static str> {
+        use pdfcraft_engine::MarkKind;
+        Some(match self {
+            Self::WordCount => "file.word_count",
+            Self::CreateImages => "create.images",
+            Self::Properties(PropsTab::Security) => "protect.properties",
+            Self::Properties(_) => "file.properties",
+            Self::About => "help.about",
+            Self::Shortcuts => "help.shortcuts",
+            Self::Split => "page.split",
+            Self::NumberPages => "page.number",
+            Self::PageProps => "page.properties",
+            Self::Protect => "protect.password",
+            Self::BookmarksFromTextStyles => "bookmark.from_text_styles",
+            Self::PageBoxes => "page.boxes",
+            Self::Marks(MarkKind::HeaderFooter) => "edit.header_footer",
+            Self::Marks(MarkKind::Watermark) => "edit.watermark",
+            Self::Marks(MarkKind::Background) => "edit.background",
+            Self::Export(export_ui::ExportKind::Image) => "export.image",
+            Self::Export(export_ui::ExportKind::Text) => "export.text",
+            Self::Export(export_ui::ExportKind::AllImages) => "export.all_images",
+            Self::Signature => "sign.fill.signature",
+            Self::ReplacePages => "page.replace",
+            Self::FieldProps | Self::BulkFieldProps | Self::DuplicateField => "form.field.properties",
+            Self::FieldTable => "form.add.text_table",
+            Self::RedactPages => "redact.pages",
+            Self::RedactSearch => "redact.search",
+            Self::RedactProps => "redact.properties",
+            Self::RedactApply => "redact.apply",
+            Self::Print => "print.dialog",
+            Self::Revert => "file.revert",
+            Self::LinkProps => "edit.link",
+            Self::Extract => "page.extract",
+            Self::RotatePages => "page.rotate_dialog",
+            Self::RemoveHidden => "protect.remove_hidden",
+            Self::Sanitize => "redact.sanitize",
+            Self::SummarizeComments => "comment.summarize",
+            Self::Sign => "sign.digital",
+            Self::Optimize | Self::AuditSpace => "optimize.advanced",
+            Self::AccessibilityOptions => "a11y.check",
+            Self::RecognizeText => "ocr.recognize",
+            Self::JsConsole => "tools.js_console",
+            Self::DocumentJs => "tools.document_js",
+            Self::Preferences => "app.preferences",
+            Self::CompareFiles => "doc.compare",
+            Self::ActionWizard => "actions.wizard",
+            Self::PdfA => "standards.pdfa",
+            Self::CreateStamp => "comment.stamp",
+            Self::AltText => "a11y.alt_text",
+            Self::CertificateViewer => "sign.panel",
+            Self::CommentProps | Self::Recovery | Self::OverwriteChanged => return None,
+        })
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
