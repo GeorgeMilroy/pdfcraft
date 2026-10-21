@@ -360,9 +360,17 @@ fn panel_body(app: &mut PdfCraftApp, ui: &mut egui::Ui, _t: &Tokens) {
         return;
     };
     let mut tool = None;
+    // What the profile lets the panel offer.
+    let scales = app.profile.allows_id("measure.scale");
+    let snaps = app.profile.allows_id("measure.snap");
+    let exports = app.profile.allows_id("measure.export");
     ui.horizontal(|ui| {
-        for (label, value) in [("Distance", Tool::Distance), ("Perimeter", Tool::Perimeter), ("Area", Tool::Area)] {
-            if ui.selectable_label(app.quick_tool == QuickTool::Measure(value), tl!(label)).clicked() {
+        for (label, value, id) in [
+            ("Distance", Tool::Distance, "measure.distance"),
+            ("Perimeter", Tool::Perimeter, "measure.perimeter"),
+            ("Area", Tool::Area, "measure.area"),
+        ] {
+            if app.profile.allows_id(id) && ui.selectable_label(app.quick_tool == QuickTool::Measure(value), tl!(label)).clicked() {
                 tool = Some(value);
             }
         }
@@ -410,8 +418,10 @@ fn panel_body(app: &mut PdfCraftApp, ui: &mut egui::Ui, _t: &Tokens) {
         ui.add(crate::widgets::line(&mut state.label).desired_width(130.0).char_limit(128));
     });
     ui.separator();
-    ui.add(widgets::checkbox(&mut state.snap_enabled, tl!("Snap to drawing")));
-    if state.snap_enabled {
+    if snaps {
+        ui.add(widgets::checkbox(&mut state.snap_enabled, tl!("Snap to drawing")));
+    }
+    if snaps && state.snap_enabled {
         ui.horizontal(|ui| {
             ui.add(widgets::checkbox(&mut state.snaps.endpoints, tl!("Endpoints")));
             ui.add(widgets::checkbox(&mut state.snaps.midpoints, tl!("Midpoints")));
@@ -422,68 +432,72 @@ fn panel_body(app: &mut PdfCraftApp, ui: &mut egui::Ui, _t: &Tokens) {
         });
         ui.add(egui::Slider::new(&mut state.sensitivity, 1.0..=20.0).text(tl!("Sensitivity")));
     }
-    ui.separator();
+    // The drawing scale, its calibration and Apply scale set a scale (measure.scale).
     // "1:N" fills the fields below and applies at once, as does picking a common scale.
+    let mut apply = false;
     let mut chosen = None;
-    let fields = scale_fields(state);
-    ui.horizontal(|ui| {
-        ui.label(tl!("Drawing scale")).on_hover_text(tl!("Applying a scale switches units to m / mm."));
-        let typed = ui.add(crate::widgets::line(&mut state.ratio_text).hint_text("1:100").desired_width(56.0).char_limit(16));
-        typed.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::TextEdit, true, tl!("Scale")));
-        state.ratio_dirty |= typed.changed();
-        if typed.lost_focus() && std::mem::take(&mut state.ratio_dirty) {
-            match parse_ratio(&state.ratio_text) {
-                Some(n) => chosen = Some(n),
-                None => state.error = Some(tl!("Enter a scale such as 1:50.").into()),
-            }
-        }
-        egui::ComboBox::from_id_salt("measure-common-scales").selected_text(tl!("Common scales")).width(20.0).show_ui(ui, |ui| {
-            for n in RATIOS {
-                if ui.selectable_label(state.ratio_text == format_ratio(n), format_ratio(n)).clicked() {
-                    chosen = Some(n);
+    if scales {
+        ui.separator();
+        let fields = scale_fields(state);
+        ui.horizontal(|ui| {
+            ui.label(tl!("Drawing scale")).on_hover_text(tl!("Applying a scale switches units to m / mm."));
+            let typed = ui.add(crate::widgets::line(&mut state.ratio_text).hint_text("1:100").desired_width(56.0).char_limit(16));
+            typed.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::TextEdit, true, tl!("Scale")));
+            state.ratio_dirty |= typed.changed();
+            if typed.lost_focus() && std::mem::take(&mut state.ratio_dirty) {
+                match parse_ratio(&state.ratio_text) {
+                    Some(n) => chosen = Some(n),
+                    None => state.error = Some(tl!("Enter a scale such as 1:50.").into()),
                 }
             }
+            egui::ComboBox::from_id_salt("measure-common-scales").selected_text(tl!("Common scales")).width(20.0).show_ui(ui, |ui| {
+                for n in RATIOS {
+                    if ui.selectable_label(state.ratio_text == format_ratio(n), format_ratio(n)).clicked() {
+                        chosen = Some(n);
+                    }
+                }
+            });
         });
-    });
-    ui.horizontal(|ui| {
-        ui.add(egui::DragValue::new(&mut state.drawing_points).range(0.000001..=1e9));
-        let page_unit = page_unit_of(state.page_unit, &state.unit, units);
-        egui::ComboBox::from_id_salt("measure-page-unit").selected_text(page_unit.label()).width(44.0).show_ui(ui, |ui| {
-            for u in PageUnit::ALL {
-                if ui.selectable_label(u == page_unit, u.label()).clicked() {
-                    state.page_unit = Some(u);
+        ui.horizontal(|ui| {
+            ui.add(egui::DragValue::new(&mut state.drawing_points).range(0.000001..=1e9));
+            let page_unit = page_unit_of(state.page_unit, &state.unit, units);
+            egui::ComboBox::from_id_salt("measure-page-unit").selected_text(page_unit.label()).width(44.0).show_ui(ui, |ui| {
+                for u in PageUnit::ALL {
+                    if ui.selectable_label(u == page_unit, u.label()).clicked() {
+                        state.page_unit = Some(u);
+                    }
+                }
+            });
+            ui.label("=");
+            ui.add(egui::DragValue::new(&mut state.real_distance).range(0.000001..=1e12));
+        });
+        ui.horizontal(|ui| {
+            ui.label(tl!("Unit"));
+            ui.add(crate::widgets::line(&mut state.unit).desired_width(64.0).char_limit(12));
+            ui.add(egui::DragValue::new(&mut state.precision).range(0..=6).prefix(format!("{} ", tl!("Decimals"))));
+        });
+        // A hand edit of the fields leaves the 1:N field showing the old ratio: say the new one.
+        if scale_fields(state) != fields {
+            sync_ratio_text(state, units);
+        }
+        if ui.button(tl!("Calibrate from two points")).clicked() {
+            tool = Some(Tool::Calibrate);
+        }
+        ui.add(widgets::checkbox(&mut state.whole_page, tl!("Entire page")));
+        if !state.whole_page {
+            ui.label(tl!("Viewport rectangle in page points (x, y, width, height)"));
+            for (i, name) in ["X", "Y", "Width", "Height"].iter().enumerate() {
+                if let Some(v) = state.rect.get_mut(i) {
+                    ui.add(egui::DragValue::new(v).range(0.0..=1e9).prefix(format!("{}: ", tl!(name))));
                 }
             }
-        });
-        ui.label("=");
-        ui.add(egui::DragValue::new(&mut state.real_distance).range(0.000001..=1e12));
-    });
-    ui.horizontal(|ui| {
-        ui.label(tl!("Unit"));
-        ui.add(crate::widgets::line(&mut state.unit).desired_width(64.0).char_limit(12));
-        ui.add(egui::DragValue::new(&mut state.precision).range(0..=6).prefix(format!("{} ", tl!("Decimals"))));
-    });
-    // A hand edit of the fields leaves the 1:N field showing the old ratio: say the new one.
-    if scale_fields(state) != fields {
-        sync_ratio_text(state, units);
-    }
-    if ui.button(tl!("Calibrate from two points")).clicked() {
-        tool = Some(Tool::Calibrate);
-    }
-    ui.add(widgets::checkbox(&mut state.whole_page, tl!("Entire page")));
-    if !state.whole_page {
-        ui.label(tl!("Viewport rectangle in page points (x, y, width, height)"));
-        for (i, name) in ["X", "Y", "Width", "Height"].iter().enumerate() {
-            if let Some(v) = state.rect.get_mut(i) {
-                ui.add(egui::DragValue::new(v).range(0.0..=1e9).prefix(format!("{}: ", tl!(name))));
-            }
         }
+        ui.horizontal(|ui| {
+            ui.label(tl!("Viewport"));
+            ui.add(crate::widgets::line(&mut state.name).desired_width(130.0).char_limit(128));
+        });
+        apply = ui.add_enabled(doc.allows_annotation(), egui::Button::new(tl!("Apply scale"))).clicked();
     }
-    ui.horizontal(|ui| {
-        ui.label(tl!("Viewport"));
-        ui.add(crate::widgets::line(&mut state.name).desired_width(130.0).char_limit(128));
-    });
-    let apply = ui.add_enabled(doc.allows_annotation(), egui::Button::new(tl!("Apply scale"))).clicked();
     if let Some(error) = &state.error {
         ui.colored_label(Color32::from_rgb(190, 50, 50), error);
     }
@@ -511,7 +525,7 @@ fn panel_body(app: &mut PdfCraftApp, ui: &mut egui::Ui, _t: &Tokens) {
             ui.colored_label(Color32::from_rgb(190, 50, 50), e);
         }
     }
-    let export = ui.button(tl!("Export measurements as CSV")).clicked();
+    let export = exports && ui.button(tl!("Export measurements as CSV")).clicked();
     if let Some(n) = chosen
         && set_ratio(state, n)
     {
@@ -549,7 +563,8 @@ fn panel_body(app: &mut PdfCraftApp, ui: &mut egui::Ui, _t: &Tokens) {
         app.views[index].measure.scale = Some(scale);
         app.quick_tool = QuickTool::Select;
     }
-    if let Some(tool) = tool {
+    // Only a tool the profile allows is armed (the buttons for the others aren't drawn).
+    if let Some(tool) = tool.filter(|t| QuickTool::Measure(*t).command().is_none_or(|id| app.profile.allows_id(id))) {
         app.views[index].measure.cancel();
         app.quick_tool = QuickTool::Measure(tool);
     }

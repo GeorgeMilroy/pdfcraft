@@ -730,7 +730,12 @@ pub fn right_panel(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
         let tags_state = &mut app.tags_state;
         let compare = &app.compare;
         let profile = &app.profile;
-        let comment_allowed = doc.allows_annotation();
+        let comment_gate = crate::comments::MenuGate {
+            profile,
+            allowed: doc.allows_annotation(),
+            can_copy: doc.allows_copying(),
+            can_modify: doc.allows_modification(),
+        };
         // A dialog or the palette owns the keyboard: the panel leaves Escape to it.
         let modal = app.dialog.is_some() || app.palette_open;
         egui::Frame::NONE
@@ -777,13 +782,13 @@ pub fn right_panel(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
                             close = true;
                         }
                         if panel == RightPanel::Pages
-                            && let Some(c) = page_tools(ui, !modal && view.panel_drag.is_none() && bm_editable)
+                            && let Some(c) = page_tools(ui, !modal && view.panel_drag.is_none() && bm_editable, profile)
                         {
                             panel_command = Some(c);
                         }
                         // Right to left: close, "…", filter, search (Acrobat's order left to right).
                         if panel == RightPanel::Comments {
-                            panel_command = crate::comments_panel::header_controls(ui, info, view, doc.comments_hidden());
+                            panel_command = crate::comments_panel::header_controls(ui, info, view, doc.comments_hidden(), profile);
                         }
                         if panel == RightPanel::Comments
                             && icons::button(ui, "search", 26.0, view.comments.search.is_some(), tl!("Search comments")).clicked()
@@ -880,7 +885,7 @@ pub fn right_panel(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
                 }
                 egui::ScrollArea::vertical().auto_shrink([false, false]).show(ui, |ui| match panel {
                     RightPanel::Comments => {
-                        if let Some(e) = crate::comments_panel::show(ui, &t, info, view, prefs, comment_allowed, &mut nav) {
+                        if let Some(e) = crate::comments_panel::show(ui, &t, info, view, prefs, comment_gate, &mut nav) {
                             panel_edit = Some(e);
                         }
                     }
@@ -959,8 +964,13 @@ pub fn right_panel(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
                     RightPanel::Search => crate::search_ui::panel(ui, &t, view, info.pages.len()),
                     RightPanel::Compare => compare_action = crate::compare_ui::panel(ui, &t, compare, id),
                     RightPanel::Attachments => {
-                        let attachable = doc.allows_modification() && doc.read_only_reason.is_none();
-                        if attachable {
+                        // Attaching and deleting change the document's content (EditContent); saving
+                        // and opening an attachment are each allowed on their own.
+                        let attachable = doc.allows_modification()
+                            && doc.read_only_reason.is_none()
+                            && profile.allows_feature(crate::features::Feature::EditContent);
+                        let (save_on, open_on) = crate::comments::attachment_offers(profile);
+                        if attachable && profile.allows_id("edit.attach") {
                             egui::Frame::NONE.inner_margin(egui::Margin::symmetric(4, 6)).show(ui, |ui| {
                                 if ui.add(egui::Button::new(tl!("Attach a file…"))).clicked() {
                                     panel_command = Some("edit.attach");
@@ -1006,12 +1016,14 @@ pub fn right_panel(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
                                             );
                                         });
                                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                                            let save = icons::button(ui, "file-down", 28.0, false, tl!("Save attachment…"));
-                                            if save.clicked() {
-                                                attachment_action = Some((ai, false));
+                                            if save_on {
+                                                let save = icons::button(ui, "file-down", 28.0, false, tl!("Save attachment…"));
+                                                if save.clicked() {
+                                                    attachment_action = Some((ai, false));
+                                                }
+                                                buttons.push(save);
                                             }
-                                            buttons.push(save);
-                                            if is_pdf {
+                                            if is_pdf && open_on {
                                                 let open = icons::button(ui, "file-input", 28.0, false, tl!("Open in a new tab"));
                                                 if open.clicked() {
                                                     attachment_action = Some((ai, true));
@@ -1031,18 +1043,18 @@ pub fn right_panel(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
                             });
                             // A double-click opens a PDF in a new tab, as Acrobat opens an attachment;
                             // any other file is saved, since PdfCraft opens only PDFs.
-                            if row.response.double_clicked() {
+                            if row.response.double_clicked() && (if is_pdf { open_on } else { save_on }) {
                                 attachment_action = Some((ai, is_pdf));
                             }
                             // A right-click on one of the row's buttons is a right-click on the row:
                             // the union keeps the row's id, so it is one menu either way.
                             let menu = buttons.into_iter().fold(row.response.clone(), |row, button| row | button);
                             menu.context_menu(|ui| {
-                                if is_pdf && ui.button(tl!("Open in a new tab")).clicked() {
+                                if is_pdf && open_on && ui.button(tl!("Open in a new tab")).clicked() {
                                     attachment_action = Some((ai, true));
                                     ui.close();
                                 }
-                                if ui.button(tl!("Save attachment…")).clicked() {
+                                if save_on && ui.button(tl!("Save attachment…")).clicked() {
                                     attachment_action = Some((ai, false));
                                     ui.close();
                                 }
@@ -1398,7 +1410,7 @@ fn outline_item(ui: &mut egui::Ui, t: &Tokens, info: &DocInfo, item: &OutlineIte
 /// command on the selected pages (the current page when none is), so it does what Pages ▸ …
 /// does; the items say so, apart from the thumbnails' own menu. `enabled` is false while the
 /// document may not be assembled or a dialog is open. Returns the command a click asks for.
-fn page_tools(ui: &mut egui::Ui, enabled: bool) -> Option<&'static str> {
+fn page_tools(ui: &mut egui::Ui, enabled: bool, profile: &crate::profile::UiProfile) -> Option<&'static str> {
     let tools: [(&'static str, &str); 6] = [
         ("page.insert_blank", tl!("Insert a blank page after the selection")),
         ("page.insert", tl!("Insert pages from a file after the selection…")),
@@ -1407,6 +1419,11 @@ fn page_tools(ui: &mut egui::Ui, enabled: bool) -> Option<&'static str> {
         ("page.extract", tl!("Extract the selected pages…")),
         ("page.delete", tl!("Delete the selected pages")),
     ];
+    // Only what the profile allows, and no menu when it allows none of them.
+    let tools: Vec<(&'static str, &str)> = tools.into_iter().filter(|(id, _)| profile.allows_id(id)).collect();
+    if tools.is_empty() {
+        return None;
+    }
     let mut picked = None;
     ui.add_enabled_ui(enabled, |ui| {
         let more = icons::button(ui, "ellipsis", 26.0, false, tl!("Page tools"));

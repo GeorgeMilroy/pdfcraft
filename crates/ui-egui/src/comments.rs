@@ -17,9 +17,11 @@ use pdfcraft_engine::{Edit, LineEnding, Markup, NewAnnotation, NoteIcon, ReviewS
 use pdfcraft_render::{Annotation, DocInfo, PageInfo, PageText};
 
 use crate::canvas::{DocView, PageXform};
+use crate::features::Feature;
 use crate::page_pointer::PagePointer;
+use crate::profile::UiProfile;
 use crate::theme::{self, Tokens};
-use crate::{QuickTool, icons};
+use crate::{QuickTool, RightPanel, icons};
 
 /// Acrobat's selection blue for annotation frames and handles (11-visual-spec §5).
 const SELECT_BLUE: Color32 = Color32::from_rgb(0x14, 0x73, 0xE6);
@@ -605,11 +607,54 @@ pub(crate) struct PageCx<'a> {
     pub redact_mark: ([f64; 3], f64),
     /// The document allows commenting.
     pub allowed: bool,
+    /// What the host lets the interface do: a comment whose kind it refuses stays put.
+    pub profile: &'a UiProfile,
     /// Comments are hidden (Hide all comments): nothing to select.
     pub hidden: bool,
 }
 
+/// The feature that owns an existing comment, from its kind ([`crate::features::annotation_feature`]).
+pub(crate) fn feature_of(a: &Annotation) -> Feature {
+    crate::features::annotation_feature(&a.subtype, a.intent.as_deref(), a.fill_sign)
+}
+
+/// What a comment's menus may offer: the profile hides what it refuses, and the document's
+/// permissions grey out what they don't allow.
+#[derive(Clone, Copy)]
+pub(crate) struct MenuGate<'a> {
+    pub profile: &'a UiProfile,
+    /// The document allows commenting.
+    pub allowed: bool,
+    /// The document allows copying text.
+    pub can_copy: bool,
+    /// The document's pages may change (Flatten comments draws into them).
+    pub can_modify: bool,
+}
+
+impl MenuGate<'_> {
+    /// Whether the profile lets `a` change: the feature of its kind is on.
+    pub(crate) fn changes(&self, a: &Annotation) -> bool {
+        self.profile.allows_feature(feature_of(a))
+    }
+
+    /// Whether replies and review status show: they are part of a comment thread.
+    pub(crate) fn threads(&self) -> bool {
+        self.profile.allows_feature(Feature::Comments)
+    }
+
+    /// Whether Copy text shows: the profile allows copying (the document's permission greys it).
+    pub(crate) fn copies(&self) -> bool {
+        self.profile.allows_id("edit.copy")
+    }
+}
+
 impl PageCx<'_> {
+    /// Whether `a` may be moved, resized or edited here: the document allows commenting and the
+    /// profile the feature of its kind.
+    fn changes(&self, a: &Annotation) -> bool {
+        self.allowed && self.profile.allows_feature(feature_of(a))
+    }
+
     fn to_user(&self, p: Pos2) -> [f64; 2] {
         let (vx, vy) = self.xf.screen_to_view(p);
         let u = self.info.pages[self.page].view_to_user(vx, vy);
@@ -1136,7 +1181,7 @@ fn press_point(cx: &PageCx<'_>) -> Option<Pos2> {
 
 /// Whether `p` is on a resize handle of the selected comment, when it is a resizable `pick`.
 fn on_handle(cx: &PageCx<'_>, view: &DocView, p: Pos2, pick: impl Fn(&Annotation) -> bool) -> bool {
-    view.comments.selected.filter(|(page, _)| *page == cx.page).and_then(|(_, i)| cx.get(i)).filter(|a| pick(a) && cx.allowed).is_some_and(|a| {
+    view.comments.selected.filter(|(page, _)| *page == cx.page).and_then(|(_, i)| cx.get(i)).filter(|a| pick(a) && cx.changes(a)).is_some_and(|a| {
         (resizable(a) && HANDLES.into_iter().any(|h| handle_pos(cx.screen_rect(a), h).distance(p) <= 7.0))
             || (grabs_points(cx.tool) && reshapable(a) && point_handle(cx, a, p).is_some())
     })
@@ -1160,13 +1205,14 @@ fn select_input(
     let selected = cv.selected.filter(|(p, _)| *p == cx.page).and_then(|(_, i)| cx.get(i));
     // Handles of a selected, resizable comment.
     let handle_at = |p: Pos2| -> Option<(i8, i8)> {
-        let a = selected.filter(|a| cx.allowed && resizable(a))?;
+        let a = selected.filter(|a| cx.changes(a) && resizable(a))?;
         let r = cx.screen_rect(a);
         HANDLES.into_iter().find(|h| handle_pos(r, *h).distance(p) <= 7.0)
     };
     // Ends and corners of a selected line, connected lines, polygon or cloud.
-    let point_at =
-        |p: Pos2| -> Option<usize> { selected.filter(|a| cx.allowed && grabs_points(cx.tool) && reshapable(a)).and_then(|a| point_handle(cx, a, p)) };
+    let point_at = |p: Pos2| -> Option<usize> {
+        selected.filter(|a| cx.changes(a) && grabs_points(cx.tool) && reshapable(a)).and_then(|a| point_handle(cx, a, p))
+    };
     let mut consumed = false;
     if let Some(p) = pointer {
         if point_at(p).is_some() {
@@ -1179,7 +1225,7 @@ fn select_input(
                 _ => egui::CursorIcon::ResizeNeSw,
             });
         } else if let Some(a) = cx.hit(p) {
-            let movable = cx.allowed && !is_markup(&a.subtype);
+            let movable = cx.changes(a) && !is_markup(&a.subtype);
             ui.ctx().set_cursor_icon(if movable { egui::CursorIcon::Move } else { egui::CursorIcon::PointingHand });
         }
     }
@@ -1207,7 +1253,7 @@ fn select_input(
         {
             cv.selected = Some((cx.page, a.index));
             cv.reveal = true;
-            if cx.allowed {
+            if cx.changes(a) {
                 cv.gesture = Some(Gesture::Move { page: cx.page, index: a.index, from: o });
             }
             consumed = true;
@@ -1276,8 +1322,8 @@ fn select_input(
     }
     if resp.double_clicked()
         && on_page
-        && cx.allowed
         && let Some(a) = pointer.and_then(|p| cx.hit(p))
+        && cx.changes(a)
     {
         cv.selected = Some((cx.page, a.index));
         cv.composer = Some(Composer {
@@ -1358,12 +1404,12 @@ pub(crate) fn paint_page(ui: &egui::Ui, painter: &egui::Painter, cx: &PageCx<'_>
             return paint_gesture(painter, cx, view);
         }
         let shift = ui.input(|i| i.modifiers.shift);
-        if cx.allowed && grabs_points(cx.tool) && reshapable(a) {
+        if cx.changes(a) && grabs_points(cx.tool) && reshapable(a) {
             return paint_points(painter, cx, view, a, pointer, shift);
         }
         let r = cx.adjusted_rect(a, cv.gesture.as_ref(), pointer, shift, view.pending_edit.as_ref()).expand(2.0);
         painter.rect_stroke(r, CornerRadius::ZERO, Stroke::new(1.0, SELECT_BLUE), egui::StrokeKind::Middle);
-        if cx.allowed && resizable(a) {
+        if cx.changes(a) && resizable(a) {
             for h in HANDLES {
                 let c = handle_pos(r, h);
                 painter.circle(c, 4.5, Color32::WHITE, Stroke::new(1.0, SELECT_BLUE));
@@ -1583,6 +1629,7 @@ pub(crate) fn composer(ctx: &egui::Context, view: &mut DocView, info: &DocInfo, 
         }
         return None;
     };
+    let profile = UiProfile::default();
     let cx = PageCx {
         page,
         xf: &xf,
@@ -1591,6 +1638,7 @@ pub(crate) fn composer(ctx: &egui::Context, view: &mut DocView, info: &DocInfo, 
         tool: QuickTool::Select,
         prefs,
         allowed: true,
+        profile: &profile,
         hidden: false,
         redact_mark: ([0.89, 0.13, 0.13], 1.0),
     };
@@ -1843,8 +1891,9 @@ pub(crate) fn page_rotation(info: &DocInfo, page: usize) -> i64 {
     info.pages.get(page).map_or(0, |p| i64::from(p.rotation))
 }
 
-/// Delete / Escape handling for comments (only while no text field has focus).
-pub(crate) fn keys(ctx: &egui::Context, view: &mut DocView, tool: &mut QuickTool, allowed: bool) {
+/// Delete / Escape handling for comments (only while no text field has focus). Delete leaves a
+/// locked comment, and one whose kind the profile refuses.
+pub(crate) fn keys(ctx: &egui::Context, view: &mut DocView, info: &DocInfo, tool: &mut QuickTool, allowed: bool, profile: &UiProfile) {
     if !ctx.input(|i| i.pointer.any_down()) {
         view.comments.cancelled_drag = false;
     }
@@ -1861,6 +1910,7 @@ pub(crate) fn keys(ctx: &egui::Context, view: &mut DocView, tool: &mut QuickTool
     }
     if allowed
         && let Some((page, index)) = cv.selected
+        && info.annotations.iter().any(|a| a.page == page && a.index == index && !a.locked && profile.allows_feature(feature_of(a)))
         && ctx.input(|i| i.key_pressed(egui::Key::Delete) || i.key_pressed(egui::Key::Backspace))
     {
         cv.selected = None;
@@ -1916,40 +1966,47 @@ pub(crate) fn nudge_keys(ctx: &egui::Context, view: &mut DocView, info: &DocInfo
     }
 }
 
+/// What an attached file's items offer in `profile`: (Save attachment…, Open in a new tab).
+/// Saving needs the download feature; opening a tab needs the app, File ▸ Open and the tab strip.
+pub(crate) fn attachment_offers(profile: &UiProfile) -> (bool, bool) {
+    let open = profile.allows_feature(Feature::App) && profile.allows_id("file.open") && profile.shows_part(crate::profile::parts::TABS);
+    (profile.allows_feature(Feature::Download), open)
+}
+
 /// Save attachment… and, for a PDF, Open in a new tab, first in a file attachment comment's
 /// menus as in the Attachments panel: the comment is where the reader finds its file. Reading
-/// the file changes nothing, so a read-only document offers them too.
-pub(crate) fn attachment_items(ui: &mut egui::Ui, view: &mut DocView, info: &DocInfo, a: &Annotation) {
+/// the file changes nothing, so a read-only document offers them too; the profile can refuse
+/// them ([`attachment_offers`]).
+pub(crate) fn attachment_items(ui: &mut egui::Ui, view: &mut DocView, info: &DocInfo, a: &Annotation, profile: &UiProfile) {
     let source = pdfcraft_render::AttachmentSource::Annotation { page: a.page, index: a.index };
     let Some(file) = info.attachments.iter().find(|f| f.source == source) else { return };
-    if ui.button(tl!("Save attachment…")).clicked() {
+    let (save, open) = attachment_offers(profile);
+    let open = open && file.name.to_lowercase().ends_with(".pdf");
+    if save && ui.button(tl!("Save attachment…")).clicked() {
         view.comments.attachment_request = Some((a.page, a.index, false));
         ui.close();
     }
-    if file.name.to_lowercase().ends_with(".pdf") && ui.button(tl!("Open in a new tab")).clicked() {
+    if open && ui.button(tl!("Open in a new tab")).clicked() {
         view.comments.attachment_request = Some((a.page, a.index, true));
         ui.close();
     }
-    ui.separator();
+    if save || open {
+        ui.separator();
+    }
 }
 
-/// Items of the canvas context menu for the selected comment (or the page).
-/// `can_modify`: the document's pages may change (Flatten comments draws into them).
-pub(crate) fn context_menu(
-    ui: &mut egui::Ui,
-    view: &mut DocView,
-    info: &DocInfo,
-    prefs: &CommentPrefs,
-    allowed: bool,
-    can_modify: bool,
-) -> Option<CanvasAction> {
+/// Items of the canvas context menu for the selected comment (or the page). Items whose
+/// feature the profile refuses are left out; the document's permissions grey out the rest.
+pub(crate) fn context_menu(ui: &mut egui::Ui, view: &mut DocView, info: &DocInfo, prefs: &CommentPrefs, gate: MenuGate<'_>) -> Option<CanvasAction> {
     let mut action = None;
+    let allowed = gate.allowed;
     let selected = view.comments.selected.and_then(|(p, i)| info.annotations.iter().find(|a| a.page == p && a.index == i && !a.is_reply()));
     match selected {
         Some(a) => {
             let (page, index) = (a.page, a.index);
-            attachment_items(ui, view, info, a);
-            if ui.add_enabled(allowed, egui::Button::new(tl!("Edit text…"))).clicked() {
+            let changes = gate.changes(a);
+            attachment_items(ui, view, info, a, gate.profile);
+            if changes && ui.add_enabled(allowed, egui::Button::new(tl!("Edit text…"))).clicked() {
                 view.comments.composer = Some(Composer {
                     page,
                     at: edit_anchor(info, a),
@@ -1959,79 +2016,92 @@ pub(crate) fn context_menu(
                 });
                 ui.close();
             }
-            if ui.add_enabled(allowed, egui::Button::new(tl!("Reply"))).clicked() {
+            // Replies are typed in the Comments panel.
+            if gate.threads() && gate.profile.shows_panel(RightPanel::Comments) && ui.add_enabled(allowed, egui::Button::new(tl!("Reply"))).clicked()
+            {
                 view.comments.reveal = true;
                 action = Some(CanvasAction::OpenComments);
                 ui.close();
             }
             ui.add_enabled_ui(allowed, |ui| {
-                ui.menu_button(tl!("Set status"), |ui| {
-                    for s in [ReviewState::None, ReviewState::Accepted, ReviewState::Cancelled, ReviewState::Completed, ReviewState::Rejected] {
-                        if ui.button(tl!(s.name())).clicked() {
-                            action =
-                                Some(CanvasAction::Edit(Box::new(Edit::SetAnnotationStatus { page, index, state: s, author: prefs.author.clone() })));
+                if gate.threads() {
+                    ui.menu_button(tl!("Set status"), |ui| {
+                        for s in [ReviewState::None, ReviewState::Accepted, ReviewState::Cancelled, ReviewState::Completed, ReviewState::Rejected] {
+                            if ui.button(tl!(s.name())).clicked() {
+                                action = Some(CanvasAction::Edit(Box::new(Edit::SetAnnotationStatus {
+                                    page,
+                                    index,
+                                    state: s,
+                                    author: prefs.author.clone(),
+                                })));
+                                ui.close();
+                            }
+                        }
+                    });
+                }
+                if changes {
+                    let keep_open = egui::containers::menu::MenuConfig::new().close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside);
+                    let _ = egui::containers::menu::SubMenuButton::new(tl!("Colour")).config(keep_open).ui(ui, |ui| {
+                        if let Some(c) = swatch_grid(ui, a.color.map(|c| c.map(f64::from))) {
+                            action = Some(CanvasAction::Edit(Box::new(Edit::StyleAnnotation {
+                                page,
+                                index,
+                                color: Some(c),
+                                opacity: None,
+                                width: None,
+                                endings: None,
+                            })));
                             ui.close();
                         }
-                    }
-                });
-                let keep_open = egui::containers::menu::MenuConfig::new().close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside);
-                let _ = egui::containers::menu::SubMenuButton::new(tl!("Colour")).config(keep_open).ui(ui, |ui| {
-                    if let Some(c) = swatch_grid(ui, a.color.map(|c| c.map(f64::from))) {
-                        action = Some(CanvasAction::Edit(Box::new(Edit::StyleAnnotation {
-                            page,
-                            index,
-                            color: Some(c),
-                            opacity: None,
-                            width: None,
-                            endings: None,
-                        })));
-                        ui.close();
-                    }
-                });
+                    });
+                }
             });
             let thread: Vec<&pdfcraft_render::Annotation> = info.annotations.iter().filter(|r| r.replies_to(a)).collect();
             let marked = crate::comments_panel::is_marked(&thread);
-            if ui.add_enabled(allowed, egui::Button::new(tl!(if marked { "Remove checkmark" } else { "Mark with checkmark" }))).clicked() {
+            if changes && ui.add_enabled(allowed, egui::Button::new(tl!(if marked { "Remove checkmark" } else { "Mark with checkmark" }))).clicked() {
                 action = Some(CanvasAction::Edit(Box::new(Edit::MarkAnnotation { page, index, marked: !marked, author: prefs.author.clone() })));
                 ui.close();
             }
-            if ui.button(tl!("Copy text")).clicked() {
+            if gate.copies() && ui.add_enabled(gate.can_copy, egui::Button::new(tl!("Copy text"))).clicked() {
                 ui.ctx().copy_text(a.contents.clone().unwrap_or_default());
                 ui.close();
             }
-            ui.separator();
-            if ui.add_enabled(allowed && !a.locked, egui::Button::new(tl!("Delete"))).clicked() {
-                view.comments.selected = None;
-                action = Some(CanvasAction::Edit(Box::new(Edit::DeleteAnnotation { page, index })));
-                ui.close();
-            }
-            if ui.add_enabled(allowed, egui::Button::new(tl!("Properties…"))).clicked() {
-                action = Some(CanvasAction::Properties(page, index));
-                ui.close();
-            }
-            if ui.add_enabled(tool_for(a).is_some(), egui::Button::new(tl!("Make Current Properties Default"))).clicked() {
-                view.comments.default_request = Some((page, index));
-                ui.close();
+            if changes {
+                ui.separator();
+                if ui.add_enabled(allowed && !a.locked, egui::Button::new(tl!("Delete"))).clicked() {
+                    view.comments.selected = None;
+                    action = Some(CanvasAction::Edit(Box::new(Edit::DeleteAnnotation { page, index })));
+                    ui.close();
+                }
+                if ui.add_enabled(allowed, egui::Button::new(tl!("Properties…"))).clicked() {
+                    action = Some(CanvasAction::Properties(page, index));
+                    ui.close();
+                }
+                if ui.add_enabled(tool_for(a).is_some(), egui::Button::new(tl!("Make Current Properties Default"))).clicked() {
+                    view.comments.default_request = Some((page, index));
+                    ui.close();
+                }
             }
         }
         None => {
             if let Some((page, at)) = view.comments.context_at
+                && gate.profile.allows_id("comment.note")
                 && ui.add_enabled(allowed, egui::Button::new(tl!("Add a sticky note here"))).clicked()
             {
                 view.comments.composer = Some(Composer { page, at, kind: ComposerKind::Note, text: String::new(), focus: true });
                 ui.close();
             }
-            if ui.button(tl!("Comments panel")).clicked() {
+            if gate.profile.shows_panel(RightPanel::Comments) && ui.button(tl!("Comments panel")).clicked() {
                 action = Some(CanvasAction::OpenComments);
                 ui.close();
             }
         }
     }
     // Every comment of the document into its pages, as Comment ▸ Flatten comments does: signed
-    // or reviewed pages whose comments should no longer move.
-    if !info.annotations.is_empty() {
+    // or reviewed pages whose comments should no longer move. Only where the profile allows it.
+    if !info.annotations.is_empty() && gate.profile.allows_id("comment.flatten") {
         ui.separator();
-        if ui.add_enabled(can_modify, egui::Button::new(tl!("Flatten comments"))).clicked() {
+        if ui.add_enabled(gate.can_modify, egui::Button::new(tl!("Flatten comments"))).clicked() {
             view.comments.selected = None;
             action = Some(CanvasAction::Edit(Box::new(Edit::Flatten { comments: true, fields: false })));
             ui.close();
@@ -2343,6 +2413,7 @@ mod tests {
                 tool: QuickTool::Select,
                 prefs: &prefs,
                 allowed: true,
+                profile: &UiProfile::default(),
                 hidden: false,
                 redact_mark: ([0.0; 3], 1.0),
             };
@@ -2577,7 +2648,13 @@ mod tests {
         let mut h = egui_kittest::Harness::new_ui_state(
             |ui, (view, actions): &mut (DocView, Vec<CanvasAction>)| {
                 ui.button("Page").context_menu(|ui| {
-                    if let Some(a) = context_menu(ui, view, &info, &prefs, true, true) {
+                    if let Some(a) = context_menu(
+                        ui,
+                        view,
+                        &info,
+                        &prefs,
+                        MenuGate { profile: &UiProfile::default(), allowed: true, can_copy: true, can_modify: true },
+                    ) {
                         actions.push(a);
                     }
                 });
