@@ -581,8 +581,8 @@ impl PdfCraftApp {
     /// Open saved revision `n` (1 = the oldest) of the active document as a new document.
     /// A repeat reuses the tab: every click used to open another identical one.
     pub fn open_revision(&mut self, n: usize) {
-        // A new document tab: an app feature.
-        if !self.profile.allows_feature(Feature::App) {
+        // A new document tab: an app feature, with the tab strip.
+        if !opens_tabs(&self.profile) {
             return;
         }
         let Some((_, id)) = self.active_ids() else { return };
@@ -641,7 +641,7 @@ impl PdfCraftApp {
     /// Open the signed version of a signature as a new document (View signed version).
     /// A repeat reuses the tab: every click used to open another identical one.
     pub fn view_signed_version(&mut self, len: usize, revision: usize) {
-        if !self.profile.allows_feature(Feature::App) {
+        if !opens_tabs(&self.profile) {
             return;
         }
         let Some((_, id)) = self.active_ids() else { return };
@@ -1160,6 +1160,12 @@ fn sign_as(ui: &mut egui::Ui, app: &mut PdfCraftApp, t: &Tokens) -> bool {
     close
 }
 
+/// Whether `profile` lets a document open in a tab of its own (a revision, a signed version):
+/// the app feature, and a tab strip to see and switch to it.
+pub(crate) fn opens_tabs(profile: &crate::profile::UiProfile) -> bool {
+    profile.allows_feature(Feature::App) && profile.shows_part(crate::profile::parts::TABS)
+}
+
 /// The message bar for signed documents: (icon, colour, template, argument).
 /// The template renders through [`crate::i18n::tr_fmt`] at the call site, so the bar follows
 /// the UI language; names inside `argument` stay as they are.
@@ -1232,7 +1238,7 @@ pub(crate) fn panel(ui: &mut egui::Ui, t: &Tokens, sigs: &[SignatureInfo], expan
     // Signing, trusting and exporting are digital signatures; viewing a version opens a tab.
     let profile = crate::dialogs::frame_profile(ui.ctx());
     let manage = profile.allows_feature(Feature::DigitalSignatures);
-    let open_files = profile.allows_feature(Feature::App);
+    let open_files = opens_tabs(&profile);
     ui.horizontal(|ui| {
         if profile.allows_id("sign.validate") && widgets::pill_button(ui, tl!("Validate all"), false).clicked() {
             action = Some(PanelAction::Validate);

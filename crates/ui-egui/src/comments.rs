@@ -1969,7 +1969,7 @@ pub(crate) fn nudge_keys(ctx: &egui::Context, view: &mut DocView, info: &DocInfo
 /// What an attached file's items offer in `profile`: (Save attachment…, Open in a new tab).
 /// Saving needs the download feature; opening a tab needs the app, File ▸ Open and the tab strip.
 pub(crate) fn attachment_offers(profile: &UiProfile) -> (bool, bool) {
-    let open = profile.allows_feature(Feature::App) && profile.allows_id("file.open") && profile.shows_part(crate::profile::parts::TABS);
+    let open = crate::sign_ui::opens_tabs(profile) && profile.allows_id("file.open");
     (profile.allows_feature(Feature::Download), open)
 }
 

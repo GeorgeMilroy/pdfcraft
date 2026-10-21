@@ -213,3 +213,17 @@ fn reshaping_a_line_needs_the_shapes_feature() {
         assert_eq!(h.state_mut().apply_edit(reshape), allowed, "reshape with Shapes {}", if allowed { "on" } else { "off" });
     }
 }
+
+#[test]
+fn delete_leaves_a_locked_comment_with_the_default_profile_too() {
+    // Deliberate: the menus already greyed Delete for a locked comment; the key now agrees.
+    let _gpu = gpu();
+    let mut h = with_comment(UiProfile::default());
+    let (page, index) = h.state().views[0].comments.selected.unwrap();
+    assert!(h.state_mut().apply_edit(Edit::LockAnnotation { page, index, locked: true }));
+    h.state_mut().views[0].comments.selected = Some((page, index));
+    h.run_steps(2);
+    h.key_press(egui::Key::Delete);
+    h.run_steps(3);
+    assert_eq!(comments(&h), 1, "a locked comment stays");
+}

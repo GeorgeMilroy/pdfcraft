@@ -16,7 +16,6 @@ pub fn show(app: &mut PdfCraftApp, ctx: &egui::Context) {
     if app.modal_open() || ctx.memory(|m| m.top_modal_layer().is_some()) {
         ctx.set_cursor_icon(egui::CursorIcon::Default);
     }
-    publish_profile(app, ctx);
     dialogs(app, ctx);
     // Last, so it sits above Document Properties when Security's Unlock… asked for it.
     unlock(app, ctx);
@@ -28,15 +27,16 @@ fn profile_id() -> egui::Id {
 }
 
 /// Hand the profile to panel bodies drawn without the app (Signatures, Accessibility, Tags),
-/// through [`frame_profile`]; republished only when it changed.
-fn publish_profile(app: &PdfCraftApp, ctx: &egui::Context) {
+/// through [`frame_profile`]; republished only when it changed. Called at the start of every
+/// frame, before anything is drawn, so no panel draws with last frame's profile.
+pub(crate) fn publish_profile(app: &PdfCraftApp, ctx: &egui::Context) {
     if *frame_profile(ctx) != app.profile {
         ctx.data_mut(|d| d.insert_temp(profile_id(), std::sync::Arc::new(app.profile.clone())));
     }
 }
 
-/// The profile as of the last time the dialogs were drawn (every frame); the default profile
-/// before the first.
+/// The profile as of the start of this frame ([`publish_profile`]); the default profile before
+/// the first.
 pub(crate) fn frame_profile(ctx: &egui::Context) -> std::sync::Arc<crate::profile::UiProfile> {
     ctx.data(|d| d.get_temp(profile_id())).unwrap_or_default()
 }
@@ -116,7 +116,6 @@ fn dialogs(app: &mut PdfCraftApp, ctx: &egui::Context) {
     let mut images_now = false;
     let mut stamp_now = false;
     let mut alt_now = false;
-    let mut arm_fill: Option<&'static str> = None;
     let t = Tokens::get(ctx);
     let mut close = false;
     let mut next = dialog;
@@ -160,7 +159,7 @@ fn dialogs(app: &mut PdfCraftApp, ctx: &egui::Context) {
                 let units = app.units;
                 // Without content editing the fields only show; opening a revision opens a tab.
                 let edit_content = app.profile.allows_feature(crate::features::Feature::EditContent);
-                let open_files = app.profile.allows_feature(crate::features::Feature::App);
+                let open_files = crate::sign_ui::opens_tabs(&app.profile);
                 let allows = |id: &str| app.profile.allows_id(id);
                 let Some((_, id)) = app.active_ids() else { return };
                 let Some(doc) = app.session.get(id) else { return };
@@ -1084,8 +1083,10 @@ fn dialogs(app: &mut PdfCraftApp, ctx: &egui::Context) {
                         app.signature = d.saved();
                         crate::fill_sign::FillTool::Signature
                     };
-                    // Armed as its command would arm it, so the profile has its say.
-                    arm_fill = Some(tool.command());
+                    // Armed at once, as before, unless the profile refuses the tool.
+                    if app.profile.allows_id(tool.command()) {
+                        app.quick_tool = crate::QuickTool::Fill(tool);
+                    }
                     app.toast = None;
                 }
                 close = apply || cancel;
@@ -1371,10 +1372,8 @@ fn dialogs(app: &mut PdfCraftApp, ctx: &egui::Context) {
                             });
                         }
                         ui.add_space(6.0);
-                        // The links are commands (help.*): shown only when the profile lets every one run.
-                        if pdfcraft_engine::links::LINKS.iter().all(|l| app.profile.allows_id(l.command))
-                            && let Some(cmd) = widgets::community_links(ui)
-                        {
+                        // The links are commands (help.*): each shows when the profile lets it run.
+                        if let Some(cmd) = widgets::community_links(ui, &|id| app.profile.allows_id(id)) {
                             link_command = Some(cmd);
                         }
                     }
@@ -1614,9 +1613,6 @@ fn dialogs(app: &mut PdfCraftApp, ctx: &egui::Context) {
         app.dialog = Some(next);
     }
     if let Some(cmd) = link_command {
-        app.execute(cmd);
-    }
-    if let Some(cmd) = arm_fill {
         app.execute(cmd);
     }
     if let Some(n) = open_revision {

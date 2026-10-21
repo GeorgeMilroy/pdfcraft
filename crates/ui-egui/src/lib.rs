@@ -419,58 +419,59 @@ pub enum Dialog {
 }
 
 impl Dialog {
-    /// The command whose dialog this is, which the profile must allow; `None` for dialogs that
-    /// finish what the app already started (recovery, overwriting a changed file).
-    pub(crate) fn command(self) -> Option<&'static str> {
+    /// The commands that open this dialog; the profile must allow one of them. Empty for dialogs
+    /// that finish what the app already started (recovery, overwriting a changed file, a
+    /// comment's properties).
+    pub(crate) fn commands(self) -> &'static [&'static str] {
         use pdfcraft_engine::MarkKind;
-        Some(match self {
-            Self::WordCount => "file.word_count",
-            Self::CreateImages => "create.images",
-            Self::Properties(PropsTab::Security) => "protect.properties",
-            Self::Properties(_) => "file.properties",
-            Self::About => "help.about",
-            Self::Shortcuts => "help.shortcuts",
-            Self::Split => "page.split",
-            Self::NumberPages => "page.number",
-            Self::Protect => "protect.password",
-            Self::PageBoxes => "page.boxes",
-            Self::Marks(MarkKind::HeaderFooter) => "edit.header_footer",
-            Self::Marks(MarkKind::Watermark) => "edit.watermark",
-            Self::Marks(MarkKind::Background) => "edit.background",
-            Self::Export(export_ui::ExportKind::Image) => "export.image",
-            Self::Export(export_ui::ExportKind::Text) => "export.text",
-            Self::Export(export_ui::ExportKind::AllImages) => "export.all_images",
-            Self::Signature => "sign.fill.signature",
-            Self::ReplacePages => "page.replace",
-            Self::FieldProps | Self::BulkFieldProps | Self::DuplicateField => "form.field.properties",
-            Self::FieldTable => "form.add.text_table",
-            Self::RedactPages => "redact.pages",
-            Self::RedactSearch => "redact.search",
-            Self::RedactProps => "redact.properties",
-            Self::RedactApply => "redact.apply",
-            Self::Print => "print.dialog",
-            Self::Revert => "file.revert",
-            Self::LinkProps => "edit.link",
-            Self::Extract => "page.extract",
-            Self::RotatePages => "page.rotate_dialog",
-            Self::RemoveHidden => "protect.remove_hidden",
-            Self::Sanitize => "redact.sanitize",
-            Self::SummarizeComments => "comment.summarize",
-            Self::Sign => "sign.digital",
-            Self::Optimize | Self::AuditSpace => "optimize.advanced",
-            Self::AccessibilityOptions => "a11y.check",
-            Self::RecognizeText => "ocr.recognize",
-            Self::JsConsole => "tools.js_console",
-            Self::DocumentJs => "tools.document_js",
-            Self::Preferences => "app.preferences",
-            Self::CompareFiles => "doc.compare",
-            Self::ActionWizard => "actions.wizard",
-            Self::PdfA => "standards.pdfa",
-            Self::CreateStamp => "comment.stamp",
-            Self::AltText => "a11y.alt_text",
-            Self::CertificateViewer => "sign.panel",
-            Self::CommentProps | Self::Recovery | Self::OverwriteChanged => return None,
-        })
+        match self {
+            Self::WordCount => &["file.word_count"],
+            Self::CreateImages => &["create.images"],
+            // One dialog with tabs: either command opens it, and its tabs switch inside it.
+            Self::Properties(_) => &["file.properties", "protect.properties"],
+            Self::About => &["help.about"],
+            Self::Shortcuts => &["help.shortcuts"],
+            Self::Split => &["page.split"],
+            Self::NumberPages => &["page.number"],
+            Self::Protect => &["protect.password"],
+            Self::PageBoxes => &["page.boxes"],
+            Self::Marks(MarkKind::HeaderFooter) => &["edit.header_footer"],
+            Self::Marks(MarkKind::Watermark) => &["edit.watermark"],
+            Self::Marks(MarkKind::Background) => &["edit.background"],
+            Self::Export(export_ui::ExportKind::Image) => &["export.image"],
+            Self::Export(export_ui::ExportKind::Text) => &["export.text"],
+            Self::Export(export_ui::ExportKind::AllImages) => &["export.all_images"],
+            Self::Signature => &["sign.fill.signature", "sign.fill.initials", "sign.fill.signature.change", "sign.fill.initials.change"],
+            Self::ReplacePages => &["page.replace"],
+            Self::FieldProps | Self::BulkFieldProps | Self::DuplicateField => &["form.field.properties"],
+            Self::FieldTable => &["form.add.text_table"],
+            Self::RedactPages => &["redact.pages"],
+            Self::RedactSearch => &["redact.search"],
+            Self::RedactProps => &["redact.properties"],
+            Self::RedactApply => &["redact.apply"],
+            Self::Print => &["print.dialog"],
+            Self::Revert => &["file.revert"],
+            Self::LinkProps => &["edit.link"],
+            Self::Extract => &["page.extract"],
+            Self::RotatePages => &["page.rotate_dialog"],
+            Self::RemoveHidden => &["protect.remove_hidden"],
+            Self::Sanitize => &["redact.sanitize"],
+            Self::SummarizeComments => &["comment.summarize"],
+            Self::Sign => &["sign.digital", "sign.certify"],
+            Self::Optimize | Self::AuditSpace => &["optimize.advanced"],
+            Self::AccessibilityOptions => &["a11y.check"],
+            Self::RecognizeText => &["ocr.recognize"],
+            Self::JsConsole => &["tools.js_console"],
+            Self::DocumentJs => &["tools.document_js"],
+            Self::Preferences => &["app.preferences"],
+            Self::CompareFiles => &["doc.compare"],
+            Self::ActionWizard => &["actions.wizard"],
+            Self::PdfA => &["standards.pdfa"],
+            Self::CreateStamp => &["comment.stamp"],
+            Self::AltText => &["a11y.alt_text"],
+            Self::CertificateViewer => &["sign.panel"],
+            Self::CommentProps | Self::Recovery | Self::OverwriteChanged => &[],
+        }
     }
 }
 
@@ -955,6 +956,9 @@ pub struct PdfCraftApp {
     /// The JavaScript console and the Document JavaScripts draft.
     pub js_console: js_ui::JsConsole,
     pub doc_js: js_ui::DocJsDraft,
+    /// Enable Acrobat JavaScript as the user set it, while a profile without JavaScript holds
+    /// scripts off in the session (`None` otherwise).
+    js_held: Option<bool>,
     pub a11y: a11y_ui::A11yState,
     pub(crate) tags_state: tags_ui::State,
     /// Rules skipped by hand, for the document they were skipped in.
@@ -1327,6 +1331,7 @@ impl PdfCraftApp {
             compare: None,
             js_console: Default::default(),
             doc_js: Default::default(),
+            js_held: None,
             a11y: a11y_ui::A11yState::default(),
             tags_state: Default::default(),
             a11y_skipped: Default::default(),
@@ -2425,8 +2430,12 @@ impl PdfCraftApp {
     /// A document asks to open `url` (a link, a button's URI action or `app.launchURL`). Web and
     /// email addresses wait for the user to allow them; anything else is refused with a notice
     /// (#90, #91). While one request is waiting, further ones are dropped, so a script can't
-    /// queue up a stream of dialogs.
+    /// queue up a stream of dialogs. A profile that turns such links off refuses them all.
     pub fn request_document_url(&mut self, url: &str, origin: LinkOrigin) {
+        if self.profile.external_links == Some(false) {
+            self.notify(tl!("Not allowed"));
+            return;
+        }
         match pdfcraft_engine::links::document_url(url) {
             Ok(url) => {
                 if self.pending_link.is_none() && self.pending_remote_link.is_none() {
@@ -2626,8 +2635,21 @@ impl PdfCraftApp {
         if self.form_preview && !self.profile.allows_feature(features::Feature::FormDesign) {
             self.form_preview = false;
         }
-        if self.dialog.is_some_and(|d| d.command().is_some_and(|id| !self.profile.allows_id(id))) {
+        if self.dialog.is_some_and(|d| !self.allows_dialog(d)) {
             self.dialog = None;
+        }
+        if !self.allows_mode(self.mode) {
+            self.switch_mode(Mode::AllTools, false);
+        }
+        // Without JavaScript, documents' scripts (open actions, calculations) don't run at all;
+        // the user's preference comes back with the feature.
+        if !self.profile.allows_feature(features::Feature::JavaScript) {
+            if self.js_held.is_none() {
+                self.js_held = Some(self.session.javascript());
+                self.session.set_javascript(false);
+            }
+        } else if let Some(on) = self.js_held.take() {
+            self.session.set_javascript(on);
         }
         let (find, organize) = (self.profile.allows_id("edit.find"), self.shows_command("page.organize"));
         for view in &mut self.views {
@@ -2659,12 +2681,23 @@ impl PdfCraftApp {
             }
     }
 
+    /// Whether the profile allows one of the commands that open dialog `d` ([`Dialog::commands`]).
+    pub(crate) fn allows_dialog(&self, d: Dialog) -> bool {
+        let ids = d.commands();
+        ids.is_empty() || ids.iter().any(|id| self.profile.allows_id(id))
+    }
+
+    /// Whether the workspace shows: one with a tool group of its own (Edit, Convert, E-Sign)
+    /// needs that group shown.
+    pub(crate) fn allows_mode(&self, mode: Mode) -> bool {
+        mode.tool_group().is_none_or(|id| self.shows_tool_group(id))
+    }
+
     /// Whether the tool group `id` shows: [`profile::UiProfile::shows_group`], and the feature the
     /// group serves is on (a group can keep entries that only copy, such as Extract pages, after
-    /// its feature is gone).
+    /// its feature is gone): the same test as the All tools list ([`panels::group_shown`]).
     pub(crate) fn shows_tool_group(&self, id: &str) -> bool {
-        pdfcraft_engine::catalog::group(id).is_some_and(|g| self.profile.shows_group(g))
-            && features::group_feature(id).is_none_or(|f| self.profile.allows_feature(f))
+        pdfcraft_engine::catalog::group(id).is_some_and(|g| panels::group_shown(&self.profile, g))
     }
 
     /// Enter a tool from the catalogue, Home, palette or control channel. Organize is a
@@ -2692,6 +2725,8 @@ impl PdfCraftApp {
     /// Select the workspace and its matching tool panel, just like the mode bar. The tool goes
     /// with the workspace as [`Self::enter_mode`] sets it.
     pub(crate) fn select_mode(&mut self, mode: Mode) {
+        // A workspace whose tool group the profile hides is All tools.
+        let mode = if self.allows_mode(mode) { mode } else { Mode::AllTools };
         self.enter_mode(mode);
         self.reveal_tools();
         if let Some(view) = self.active.and_then(|i| self.views.get_mut(i)) {
@@ -2758,6 +2793,7 @@ impl PdfCraftApp {
     /// that panel. The rail stays in Read mode, and its buttons open panels there too (#932).
     /// Read mode hides the quick toolbar, so entering it also puts the current tool down.
     pub(crate) fn switch_mode(&mut self, mode: Mode, select_tools: bool) {
+        let mode = if self.allows_mode(mode) { mode } else { Mode::AllTools };
         let was_read = self.mode == Mode::Read;
         if select_tools {
             self.select_mode(mode);
@@ -2867,7 +2903,7 @@ impl PdfCraftApp {
             "digital_ids": self.digital_ids.iter().filter(|e| !e.path.starts_with("keychain:") && !e.path.starts_with("windows:")).collect::<Vec<_>>(),
             "trusted": trusted,
             "custom_stamps": stamps_ui::encode(&self.custom_stamps),
-            "javascript": self.session.javascript(),
+            "javascript": self.js_held.unwrap_or(self.session.javascript()),
             "actions": actions_ui::encode(&self.custom_actions),
             "combine_columns": self.combine_columns.to_json(),
             "combine_view": self.combine_view.as_str(),
@@ -3066,7 +3102,10 @@ impl PdfCraftApp {
         self.custom_stamps = stamps_ui::decode(&v["custom_stamps"]);
         self.custom_actions = actions_ui::decode(&v["actions"]);
         if let Some(on) = v["javascript"].as_bool() {
-            self.session.set_javascript(on);
+            match self.js_held.as_mut() {
+                Some(held) => *held = on,
+                None => self.session.set_javascript(on),
+            }
         }
         if let Ok(pems) = serde_json::from_value::<Vec<String>>(v["trusted"].clone()) {
             let certs = pems.iter().filter_map(|p| pdfcraft_engine::sign::x509::load_certificates(p.as_bytes()).ok()).flatten().collect();
@@ -3131,6 +3170,9 @@ impl PdfCraftApp {
             }
             ("mode", _) => {
                 let mode = Mode::parse(value).unwrap_or(Mode::AllTools);
+                if !self.allows_mode(mode) {
+                    return Err(format!("the profile doesn't allow the {value} mode"));
+                }
                 self.mode_override = Some(mode);
                 self.mode = mode;
                 // As switch_mode: another workspace puts the expanded All tools view away.
@@ -3157,15 +3199,7 @@ impl PdfCraftApp {
                 self.all_tools_full = false;
             }
             ("dialog", _) => {
-                let wanted = match value {
-                    "sign" | "certify" => Some(Dialog::Sign),
-                    "number-pages" => Some(Dialog::NumberPages),
-                    _ => None,
-                };
-                if wanted.and_then(Dialog::command).is_some_and(|id| !self.profile.allows_id(id)) {
-                    return Err(format!("the profile doesn't allow the {value} dialog"));
-                }
-                self.dialog = match value {
+                let candidate = match value {
                     "properties" => Some(Dialog::Properties(PropsTab::Description)),
                     "security" => Some(Dialog::Properties(PropsTab::Security)),
                     "fonts" => Some(Dialog::Properties(PropsTab::Fonts)),
@@ -3193,24 +3227,33 @@ impl PdfCraftApp {
                     "pdfa" => Some(Dialog::PdfA),
                     "signature" => Some(Dialog::Signature),
                     "optimize" => Some(Dialog::Optimize),
-                    "sign" | "certify" => {
-                        // Sign with a Digital ID for an invisible signature on the current page.
-                        let page = self.active.map_or(0, |i| self.views[i].current);
-                        self.start_signing(page, None, None, (value == "certify").then_some(2));
-                        Some(Dialog::Sign)
-                    }
-                    "number-pages" => {
-                        // Same path as the menu, so the page range is seeded.
-                        self.execute("page.number");
-                        Some(Dialog::NumberPages)
-                    }
+                    "sign" | "certify" => Some(Dialog::Sign),
+                    "number-pages" => Some(Dialog::NumberPages),
                     "none" => None,
                     _ => Some(Dialog::About),
                 };
-                if self.dialog.and_then(Dialog::command).is_some_and(|id| !self.profile.allows_id(id)) {
-                    self.dialog = None;
+                // A refusal leaves everything as it was: checked before anything happens.
+                let refused = match value {
+                    "sign" => !self.profile.allows_id("sign.digital"),
+                    "certify" => !self.profile.allows_id("sign.certify"),
+                    _ => candidate.is_some_and(|d| !self.allows_dialog(d)),
+                };
+                if refused {
                     return Err(format!("the profile doesn't allow the {value} dialog"));
                 }
+                match value {
+                    "sign" | "certify" => {
+                        // Sign with a Digital ID for an invisible signature on the current page.
+                        let page = self.active.and_then(|i| self.views.get(i)).map_or(0, |v| v.current);
+                        self.start_signing(page, None, None, (value == "certify").then_some(2));
+                    }
+                    // Same path as the menu, so the page range is seeded.
+                    "number-pages" => {
+                        self.execute("page.number");
+                    }
+                    _ => {}
+                }
+                self.dialog = candidate;
             }
             ("tools", _) if value == "full" => self.expand_all_tools(),
             ("tools", _) => {
@@ -3659,8 +3702,9 @@ impl PdfCraftApp {
             && !space
         {
             self.space_hand = None;
+            // The tool from before Space comes back, unless the profile refuses it now.
             if self.quick_tool == QuickTool::Hand {
-                self.quick_tool = previous;
+                self.quick_tool = if previous.command().is_none_or(|id| self.profile.allows_id(id)) { previous } else { QuickTool::Select };
             }
         }
         if !free || !plain {
@@ -3732,8 +3776,9 @@ impl eframe::App for PdfCraftApp {
             }
         }
         // Whatever set it (the control channel, a host assigning the profile), nothing the
-        // profile refuses stays open or armed.
+        // profile refuses stays open or armed, and what is drawn this frame reads this profile.
         self.enforce_profile();
+        dialogs::publish_profile(self, ctx);
         #[cfg(not(target_arch = "wasm32"))]
         {
             if let Some(worker) = &self.open_worker {
