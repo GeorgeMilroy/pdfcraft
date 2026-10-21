@@ -318,6 +318,9 @@ pub(crate) fn page_input(
     style: &AddedText,
     view: &mut DocView,
 ) -> bool {
+    if !crate::edit_text_ui::Offers::get(ui.ctx()).edit {
+        return false;
+    }
     let mut consumed = false;
     let pointer = ui.input(|i| i.pointer.hover_pos().or(i.pointer.interact_pos()));
     let cv = &mut view.content;
@@ -464,6 +467,7 @@ pub(crate) fn keys(ctx: &egui::Context, view: &mut DocView) {
         return;
     }
     let (del, esc) = ctx.input(|i| (i.key_pressed(egui::Key::Delete) || i.key_pressed(egui::Key::Backspace), i.key_pressed(egui::Key::Escape)));
+    let del = del && crate::edit_text_ui::Offers::get(ctx).edit;
     if del && let Some((page, index)) = view.content.selected.take() {
         view.pending_edit = Some(Edit::DeleteContent { page, index });
     } else if esc {
@@ -653,6 +657,9 @@ impl crate::PdfCraftApp {
 
     /// Edit text & images ▸ Replace Image: pick a file to draw in a page image's place.
     pub(crate) fn replace_page_image_dialog(&mut self, page: usize, index: usize) {
+        if !self.profile.allows_id("edit.edit_text") {
+            return;
+        }
         #[cfg(not(target_arch = "wasm32"))]
         self.pick_image(tl!("Replace image"), move |app, name, bytes| {
             app.apply_edit(Edit::EditPageImage {
@@ -725,6 +732,11 @@ impl crate::PdfCraftApp {
 
     /// Cut: copy the picture, and only when that worked take it off the page (one undo step).
     pub(crate) fn cut_page_image(&mut self, page: usize, index: usize) {
+        // Nothing reaches the clipboard for a removal the profile would refuse.
+        if !self.profile.allows_edit(&Edit::EditPageImage { page, index, change: pdfcraft_engine::ImageEdit::Delete }) {
+            self.notify(tl!("Not allowed"));
+            return;
+        }
         if self.copy_page_image(page, index) {
             self.apply_edit(Edit::EditPageImage { page, index, change: pdfcraft_engine::ImageEdit::Delete });
         }
@@ -733,6 +745,9 @@ impl crate::PdfCraftApp {
     /// Redact image: a redaction mark over the whole picture. It is applied, like any mark, from
     /// Redact a PDF.
     pub(crate) fn redact_page_image(&mut self, page: usize, index: usize) {
+        if !self.profile.allows_id("redact.mark") {
+            return;
+        }
         let Some(rect) = self.page_image_box(page, index) else { return };
         let author = self.comment_prefs.author.clone();
         let mark = self.redact_prefs.mark(page, vec![pdfcraft_engine::rect_quad(rect)], &author);
@@ -743,17 +758,21 @@ impl crate::PdfCraftApp {
 
     /// Create link: the link properties for a new link over the picture.
     pub(crate) fn link_page_image(&mut self, page: usize, index: usize) {
+        if !self.profile.allows_id("edit.link") {
+            return;
+        }
         if let Some(rect) = self.page_image_box(page, index) {
             self.open_link_props(page, Some(rect), None);
         }
     }
 
-    /// Recognize text: the Recognize Text dialog, set to this page.
+    /// Recognize text: the Recognize Text dialog, set to this page (through its command, so
+    /// the profile and the document decide as they do for the menu's).
     pub fn recognize_text_on_page(&mut self, page: usize) {
         self.ocr_draft.pages = crate::ocr_ui::OcrPages::Range;
         self.ocr_draft.from = page + 1;
         self.ocr_draft.to = page + 1;
-        self.dialog = Some(crate::Dialog::RecognizeText);
+        self.execute("ocr.recognize");
     }
 
     /// Click an image field: pick a picture for it.
@@ -771,6 +790,9 @@ impl crate::PdfCraftApp {
 
     /// Edit image ▸ Replace: pick a file for the selected image.
     pub fn replace_image_dialog(&mut self, page: usize, index: usize) {
+        if !self.profile.allows_id("edit.edit_text") {
+            return;
+        }
         #[cfg(not(target_arch = "wasm32"))]
         self.pick_image(tl!("Replace image"), move |app, name, bytes| {
             app.apply_edit(Edit::ReplaceImage { page, index, name, bytes: std::sync::Arc::new(bytes) });
