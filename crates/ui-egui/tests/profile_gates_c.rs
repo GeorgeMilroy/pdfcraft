@@ -188,3 +188,55 @@ fn the_find_bar_closes_when_find_is_refused() {
         assert_eq!(h.state().views[0].find.is_some(), open);
     }
 }
+
+/// One 300×200 page with a line of Helvetica text (as in `tests/comments.rs`).
+const TEXT_FIXTURE: &[u8] = b"%PDF-1.7
+1 0 obj << /Type /Catalog /Pages 2 0 R >> endobj
+2 0 obj << /Type /Pages /Kids [3 0 R] /Count 1 >> endobj
+3 0 obj << /Type /Page /Parent 2 0 R /MediaBox [0 0 300 200] /Contents 5 0 R /Resources << /Font << /F1 7 0 R >> >> >> endobj
+5 0 obj << /Length 55 >> stream
+BT /F1 14 Tf 20 150 Td (The quick brown fox) Tj ET
+endstream endobj
+7 0 obj << /Type /Font /Subtype /Type1 /BaseFont /Helvetica >> endobj
+trailer << /Root 1 0 R >>
+%%EOF";
+
+#[test]
+fn the_selection_bar_shows_only_the_actions_the_profile_allows() {
+    let _gpu = gpu();
+    let bar = |profile: UiProfile| {
+        let mut h = Harness::builder().with_size(egui::vec2(1400.0, 900.0)).build_eframe(move |_cc| {
+            let mut app = PdfCraftApp::new();
+            app.set_option("language", "en").unwrap();
+            app.open_bytes("words.pdf", None, TEXT_FIXTURE.to_vec()).unwrap();
+            app.set_option("left", "closed").unwrap();
+            app.set_option("panel", "none").unwrap();
+            app.set_profile(profile);
+            app
+        });
+        // Once the page is drawn and its text known.
+        for _ in 0..200 {
+            h.run_steps(2);
+            if !h.state().render_pending() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        let mut selected = false;
+        for _ in 0..3000 {
+            h.state_mut().views[0].select_text(0, 4, 8);
+            h.run_steps(2);
+            if h.state().views[0].selected_text().is_some() {
+                selected = true;
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert!(selected, "the page has text to select");
+        h.run_steps(3);
+        (count(&h, "Highlight"), count(&h, "Copy"), count(&h, "Add comment"))
+    };
+    // Highlight is on the quick bar too.
+    assert_eq!(bar(UiProfile::default()), (2, 1, 1));
+    assert_eq!(bar(hiding(&["comment.highlight", "edit.copy"])), (0, 0, 1));
+}

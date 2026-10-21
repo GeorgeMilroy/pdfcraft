@@ -516,9 +516,10 @@ pub fn artcraft_mark(ui: &mut egui::Ui, size: f32) -> Response {
     ui.add(egui::Image::from_bytes(mark.uri.clone(), mark.bytes.clone()).fit_to_exact_size(vec2(size, size)).alt_text(mark.alt.as_str()))
 }
 
-/// Buttons for every community link (`pdfcraft_engine::links`), Discord first and prominent.
+/// Buttons for every community link (`pdfcraft_engine::links`) that `shows` (by command), Discord
+/// first and prominent.
 /// Returns the registry command of the one clicked.
-pub fn community_links(ui: &mut egui::Ui) -> Option<&'static str> {
+pub fn community_links(ui: &mut egui::Ui, shows: &dyn Fn(&str) -> bool) -> Option<&'static str> {
     let mut clicked = None;
     if !crate::brand::current().community_links {
         return clicked;
@@ -526,6 +527,9 @@ pub fn community_links(ui: &mut egui::Ui) -> Option<&'static str> {
     ui.horizontal_wrapped(|ui| {
         ui.spacing_mut().item_spacing = vec2(8.0, 8.0);
         for (i, l) in pdfcraft_engine::links::LINKS.iter().enumerate() {
+            if !shows(l.command) {
+                continue;
+            }
             let resp = if i == 0 { icon_pill(ui, l.icon, tl!("Join our Discord"), true) } else { icon_pill(ui, l.icon, tl!(l.label), false) };
             if resp.on_hover_text(l.url).clicked() {
                 clicked = Some(l.command);
