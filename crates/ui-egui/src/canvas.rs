@@ -790,6 +790,95 @@ pub(crate) enum PageMenuAction {
     FlattenComments,
 }
 
+impl PageMenuAction {
+    /// The command whose profile check this entry takes; `None` for turning the view, which is
+    /// always offered. Export this PDF opens the Export tool group, checked in
+    /// [`PageMenuOffers::of`].
+    pub(crate) fn command(&self) -> Option<&'static str> {
+        Some(match self {
+            Self::RotateCCW | Self::RotateCW | Self::ExportPdf => return None,
+            Self::Print => "print.dialog",
+            Self::SelectTool => "view.select_tool",
+            Self::HandTool => "view.hand_tool",
+            Self::MarqueeZoom => "view.marquee_zoom",
+            Self::Copy => "edit.copy",
+            Self::Paste(..) | Self::AddImage => "edit.image",
+            Self::AddComment(..) => "comment.note",
+            Self::FlattenComments => "comment.flatten",
+            Self::AddBookmark => "bookmark.add",
+            Self::TakeSnapshot => "edit.snapshot",
+            Self::EditPdf => "edit.edit_text",
+            Self::AddText => "edit.text",
+            Self::DeletePage(_) => "page.delete",
+            Self::Find => "edit.find",
+            Self::DocProperties => "file.properties",
+        })
+    }
+
+    /// The entry's place in [`PageMenuOffers`].
+    const fn bit(&self) -> u32 {
+        1 << match self {
+            Self::RotateCCW => 0,
+            Self::RotateCW => 1,
+            Self::Print => 2,
+            Self::SelectTool => 3,
+            Self::HandTool => 4,
+            Self::MarqueeZoom => 5,
+            Self::Copy => 6,
+            Self::Paste(..) => 7,
+            Self::AddComment(..) => 8,
+            Self::AddBookmark => 9,
+            Self::TakeSnapshot => 10,
+            Self::EditPdf => 11,
+            Self::AddText => 12,
+            Self::AddImage => 13,
+            Self::DeletePage(_) => 14,
+            Self::ExportPdf => 15,
+            Self::Find => 16,
+            Self::DocProperties => 17,
+            Self::FlattenComments => 18,
+        }
+    }
+}
+
+/// The page menu entries the profile ([`crate::profile::UiProfile`]) offers: the others are not
+/// drawn, and do nothing if chosen anyway.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct PageMenuOffers(u32);
+
+impl PageMenuOffers {
+    pub(crate) fn of(profile: &crate::profile::UiProfile) -> Self {
+        use PageMenuAction as A;
+        let all = [
+            A::RotateCCW,
+            A::RotateCW,
+            A::Print,
+            A::SelectTool,
+            A::HandTool,
+            A::MarqueeZoom,
+            A::Copy,
+            A::Paste(0, [0.0, 0.0]),
+            A::AddComment(0, [0.0, 0.0]),
+            A::AddBookmark,
+            A::TakeSnapshot,
+            A::EditPdf,
+            A::AddText,
+            A::AddImage,
+            A::DeletePage(0),
+            A::ExportPdf,
+            A::Find,
+            A::DocProperties,
+            A::FlattenComments,
+        ];
+        let export = !profile.hides_group("export") && profile.allows_feature(crate::features::Feature::Export);
+        Self(all.iter().filter(|a| a.command().map_or(**a != A::ExportPdf || export, |id| profile.allows_id(id))).fold(0, |bits, a| bits | a.bit()))
+    }
+
+    pub(crate) fn offers(self, action: &PageMenuAction) -> bool {
+        self.0 & action.bit() != 0
+    }
+}
+
 pub(crate) struct PageMenuPerms {
     pub can_modify: bool,
     pub can_assemble: bool,
@@ -801,7 +890,14 @@ pub(crate) struct PageMenuPerms {
     pub has_annotations: bool,
 }
 
-pub(crate) fn default_page_context_menu(ui: &mut egui::Ui, page: usize, at: [f64; 2], perms: PageMenuPerms, action: &mut Option<PageMenuAction>) {
+pub(crate) fn default_page_context_menu(
+    ui: &mut egui::Ui,
+    page: usize,
+    at: [f64; 2],
+    perms: PageMenuPerms,
+    offered: PageMenuOffers,
+    action: &mut Option<PageMenuAction>,
+) {
     use PageMenuAction as A;
     // Takes `choice` when `entry` was clicked, and closes the menu.
     let mut pick = |entry: egui::Response, ui: &mut egui::Ui, choice: PageMenuAction| {
@@ -815,53 +911,91 @@ pub(crate) fn default_page_context_menu(ui: &mut egui::Ui, page: usize, at: [f64
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 4.0;
         pick(icon(ui, "rotate-ccw", tl!("Rotate view counterclockwise")), ui, A::RotateCCW);
-        ui.add_enabled_ui(perms.can_print, |ui| pick(icon(ui, "printer", tl!("Print")), ui, A::Print));
-        pick(icon(ui, "mouse-pointer-2", tl!("Select Tool")), ui, A::SelectTool);
-        pick(icon(ui, "hand", tl!("Hand Tool")), ui, A::HandTool);
-        pick(icon(ui, "zoom-in", tl!("Marquee Zoom")), ui, A::MarqueeZoom);
+        if offered.offers(&A::Print) {
+            ui.add_enabled_ui(perms.can_print, |ui| pick(icon(ui, "printer", tl!("Print")), ui, A::Print));
+        }
+        if offered.offers(&A::SelectTool) {
+            pick(icon(ui, "mouse-pointer-2", tl!("Select Tool")), ui, A::SelectTool);
+        }
+        if offered.offers(&A::HandTool) {
+            pick(icon(ui, "hand", tl!("Hand Tool")), ui, A::HandTool);
+        }
+        if offered.offers(&A::MarqueeZoom) {
+            pick(icon(ui, "zoom-in", tl!("Marquee Zoom")), ui, A::MarqueeZoom);
+        }
     });
 
-    ui.separator();
+    // Only the entries the profile offers; a group left empty drops its separator.
+    let shown = |actions: &[PageMenuAction]| actions.iter().any(|a| offered.offers(a));
+    if shown(&[A::Copy, A::Paste(page, at)]) {
+        ui.separator();
+    }
+    if offered.offers(&A::Copy) {
+        pick(
+            ui.add_enabled(
+                perms.can_copy_items,
+                egui::Button::new(tl!("Copy")).shortcut_text(crate::commands::shortcut_label(ui.ctx(), crate::commands::COPY)),
+            ),
+            ui,
+            A::Copy,
+        );
+    }
+    if offered.offers(&A::Paste(page, at)) {
+        pick(
+            ui.add_enabled(
+                perms.can_paste,
+                egui::Button::new(tl!("Paste"))
+                    .shortcut_text(crate::commands::shortcut_label(ui.ctx(), pdfcraft_engine::commands::Shortcut::cmd("V"))),
+            ),
+            ui,
+            A::Paste(page, at),
+        );
+    }
 
-    pick(
-        ui.add_enabled(
-            perms.can_copy_items,
-            egui::Button::new(tl!("Copy")).shortcut_text(crate::commands::shortcut_label(ui.ctx(), crate::commands::COPY)),
-        ),
-        ui,
-        A::Copy,
-    );
-    pick(
-        ui.add_enabled(
-            perms.can_paste,
-            egui::Button::new(tl!("Paste")).shortcut_text(crate::commands::shortcut_label(ui.ctx(), pdfcraft_engine::commands::Shortcut::cmd("V"))),
-        ),
-        ui,
-        A::Paste(page, at),
-    );
-
-    ui.separator();
-
-    pick(ui.add_enabled(perms.can_annotate, egui::Button::new(tl!("Add comment"))), ui, A::AddComment(page, at));
-    if perms.has_annotations {
+    if shown(&[A::AddComment(page, at), A::FlattenComments, A::AddBookmark, A::TakeSnapshot]) {
+        ui.separator();
+    }
+    if offered.offers(&A::AddComment(page, at)) {
+        pick(ui.add_enabled(perms.can_annotate, egui::Button::new(tl!("Add comment"))), ui, A::AddComment(page, at));
+    }
+    if perms.has_annotations && offered.offers(&A::FlattenComments) {
         pick(ui.add_enabled(perms.can_modify, egui::Button::new(tl!("Flatten comments"))), ui, A::FlattenComments);
     }
-    pick(ui.add_enabled(perms.can_assemble, egui::Button::new(tl!("Add bookmark"))), ui, A::AddBookmark);
-    pick(ui.add_enabled(perms.can_copy, egui::Button::new(tl!("Take a snapshot"))), ui, A::TakeSnapshot);
+    if offered.offers(&A::AddBookmark) {
+        pick(ui.add_enabled(perms.can_assemble, egui::Button::new(tl!("Add bookmark"))), ui, A::AddBookmark);
+    }
+    if offered.offers(&A::TakeSnapshot) {
+        pick(ui.add_enabled(perms.can_copy, egui::Button::new(tl!("Take a snapshot"))), ui, A::TakeSnapshot);
+    }
+
+    if shown(&[A::EditPdf, A::AddText, A::AddImage, A::DeletePage(page), A::ExportPdf]) {
+        ui.separator();
+    }
+    if offered.offers(&A::EditPdf) {
+        pick(ui.add_enabled(perms.can_modify, egui::Button::new(egui::RichText::new(tl!("Edit this PDF")).strong())), ui, A::EditPdf);
+    }
+    if offered.offers(&A::AddText) {
+        pick(ui.add_enabled(perms.can_modify, egui::Button::new(tl!("Add text"))), ui, A::AddText);
+    }
+    if offered.offers(&A::AddImage) {
+        pick(ui.add_enabled(perms.can_modify, egui::Button::new(tl!("Add image"))), ui, A::AddImage);
+    }
+    if offered.offers(&A::DeletePage(page)) {
+        pick(ui.add_enabled(perms.can_assemble, egui::Button::new(tl!("Delete page"))), ui, A::DeletePage(page));
+    }
+    if offered.offers(&A::ExportPdf) {
+        pick(ui.add_enabled(perms.can_copy, egui::Button::new(tl!("Export this PDF"))), ui, A::ExportPdf);
+    }
 
     ui.separator();
 
-    pick(ui.add_enabled(perms.can_modify, egui::Button::new(egui::RichText::new(tl!("Edit this PDF")).strong())), ui, A::EditPdf);
-    pick(ui.add_enabled(perms.can_modify, egui::Button::new(tl!("Add text"))), ui, A::AddText);
-    pick(ui.add_enabled(perms.can_modify, egui::Button::new(tl!("Add image"))), ui, A::AddImage);
-    pick(ui.add_enabled(perms.can_assemble, egui::Button::new(tl!("Delete page"))), ui, A::DeletePage(page));
-    pick(ui.add_enabled(perms.can_copy, egui::Button::new(tl!("Export this PDF"))), ui, A::ExportPdf);
-
-    ui.separator();
-
-    pick(ui.button(tl!("Find text or tools")), ui, A::Find);
+    if offered.offers(&A::Find) {
+        pick(ui.button(tl!("Find text or tools")), ui, A::Find);
+    }
     pick(ui.button(tl!("Rotate view clockwise")), ui, A::RotateCW);
-    pick(ui.button(tl!("Document properties…")), ui, A::DocProperties);
+    if offered.offers(&A::DocProperties) {
+        pick(ui.button(tl!("Document properties…")), ui, A::DocProperties);
+    }
 }
 
 impl DocView {
@@ -1191,6 +1325,47 @@ struct PageEnv<'a> {
     fill_text_color: [f64; 3],
     today: (i64, u32, u32),
     can_paste_image: bool,
+    offers: Offers,
+}
+
+/// What the profile ([`crate::profile::UiProfile`]) offers on the page this frame: what it refuses
+/// is not drawn, and does nothing.
+#[derive(Clone, Copy)]
+struct Offers {
+    copy: bool,
+    column: bool,
+    link: bool,
+    remove_links: bool,
+    field_props: bool,
+    /// The Fill & Sign tool in use, if it is one.
+    fill_tool: bool,
+    find: bool,
+    fields: crate::forms_ui::FieldOffers,
+    /// The entries of the page's right-click menu.
+    page_menu: PageMenuOffers,
+}
+
+impl Offers {
+    fn of(profile: &crate::profile::UiProfile, tool: QuickTool) -> Self {
+        use crate::features::Feature;
+        Self {
+            copy: profile.allows_id("edit.copy"),
+            column: profile.allows_id("edit.column_select"),
+            link: profile.allows_id("edit.link"),
+            remove_links: profile.allows_id("edit.remove_links"),
+            field_props: profile.allows_id("form.field.properties"),
+            fill_tool: match tool {
+                QuickTool::Fill(ft) => profile.allows_id(ft.command()),
+                _ => true,
+            },
+            find: profile.allows_id("edit.find"),
+            page_menu: PageMenuOffers::of(profile),
+            fields: crate::forms_ui::FieldOffers {
+                fill: profile.allows_feature(Feature::FormFill),
+                sign: profile.allows_feature(Feature::DigitalSignatures),
+            },
+        }
+    }
 }
 
 /// What the page-scroll closure produces for the rest of the frame.
@@ -1611,6 +1786,7 @@ fn draw_pages(
         unobstructed,
         visible_pages,
         y_shift,
+        offers,
         ..
     } = *env;
     // egui's drag responses accept every pointer button. Keep a wheel gesture from also
@@ -1880,7 +2056,7 @@ fn draw_pages(
                 });
                 ui.separator();
             }
-            if ui.button(tl!("Properties…")).clicked() {
+            if offers.field_props && ui.button(tl!("Properties…")).clicked() {
                 field_menu = Some(FieldMenu::Properties);
                 ui.close();
             }
@@ -1896,7 +2072,7 @@ fn draw_pages(
             }
             return;
         }
-        if let Some((page, index)) = view.links.context {
+        if let Some((page, index)) = view.links.context.filter(|_| offers.link) {
             if ui.button(tl!("Properties…")).clicked() {
                 view.links.open_existing = Some((page, index));
                 ui.close();
@@ -1908,7 +2084,7 @@ fn draw_pages(
                 ui.close();
             }
             ui.separator();
-            if ui.add_enabled(can_modify, egui::Button::new(tl!("Remove all links"))).clicked() {
+            if offers.remove_links && ui.add_enabled(can_modify, egui::Button::new(tl!("Remove all links"))).clicked() {
                 view.pending_edit = Some(Edit::RemoveLinks { pages: None });
                 view.links.selected = None;
                 view.links.context = None;
@@ -1944,7 +2120,9 @@ fn draw_pages(
         }
         // Over a picture (and no comment): Copy Image, as in Acrobat's page menu.
         let mut copy_image = None;
-        if let Some((page, at)) = view.comments.context_at {
+        if offers.copy
+            && let Some((page, at)) = view.comments.context_at
+        {
             // The page's content is parsed once per right-click, not on every frame the menu is open.
             let key = egui::Id::unique("copy-image-under-menu");
             let cached = ui.data(|d| d.get_temp::<(usize, [f64; 2], Option<usize>)>(key)).filter(|c| c.0 == page && c.1 == at);
@@ -1985,7 +2163,7 @@ fn draw_pages(
             can_paste,
             has_annotations: !info.annotations.is_empty(),
         };
-        default_page_context_menu(ui, page, at, perms, &mut page_action);
+        default_page_context_menu(ui, page, at, perms, offers.page_menu, &mut page_action);
     });
     if !resp.context_menu_opened() {
         ui.ctx().data_mut(|d| d.insert_temp(crate::edit_text_ui::image_menu_id(), false));
@@ -2542,7 +2720,7 @@ fn scroll_direction(dir: i8, dy: f32, resized: bool) -> i8 {
 /// The hover tip, find bar, size hint and the in-place editors drawn over the pages. Whether the
 /// text editor was finished.
 fn frame_overlays(ui: &mut egui::Ui, view: &mut DocView, env: &PageEnv<'_>, primary_down: bool, hover_text: Option<(Pos2, String)>) -> bool {
-    let PageEnv { added, author, avail, can_modify, doc, form, info, prefs, t, today, tool, units, unobstructed, .. } = *env;
+    let PageEnv { added, author, avail, can_modify, doc, form, info, prefs, t, today, tool, units, unobstructed, offers, .. } = *env;
     if let Some((pos, text)) = hover_text {
         // Click-through, as a tooltip is: the pages lose the pointer under anything that isn't.
         let tip = egui::Area::new(egui::Id::unique("canvas-hover")).order(egui::Order::Tooltip).interactable(false);
@@ -2552,6 +2730,10 @@ fn frame_overlays(ui: &mut egui::Ui, view: &mut DocView, env: &PageEnv<'_>, prim
                 ui.label(text);
             });
         });
+    }
+    // A profile without Find closes the find bar (the Search panel is gated as a panel).
+    if view.find.as_ref().is_some_and(|f| !f.in_panel) && !offers.find {
+        view.find = None;
     }
     find_bar(view, info.pages.len(), avail, ui, t);
     page_size_hint(view, info, units, avail, unobstructed, ui, t);
@@ -2563,6 +2745,9 @@ fn frame_overlays(ui: &mut egui::Ui, view: &mut DocView, env: &PageEnv<'_>, prim
     }
     if let Some(e) = crate::edit_text_ui::overlay(ui.ctx(), view, info) {
         view.pending_edit = Some(e);
+    }
+    if !offers.fields.fill {
+        view.forms.focus = None;
     }
     let text_box = crate::forms_ui::text_box(doc, view, form);
     if let Some(e) = crate::forms_ui::overlay(ui.ctx(), view, info, form, primary_down, text_box.as_ref(), today) {
@@ -2620,8 +2805,12 @@ fn follow_link(
                 view.go_to_dest(p, dest, &doc.info);
             }
         }
-        LinkTarget::Uri(u) => app.request_document_url(&u, crate::LinkOrigin::Link),
+        LinkTarget::Uri(u) => area::follow_url(app, &u, crate::LinkOrigin::Link),
         LinkTarget::SetLayers { changes, preserve_rb } => set_layers(app, index, &changes, preserve_rb),
+        // Another file opens in a tab of its own: not without tabs and File ▸ Open.
+        LinkTarget::RemoteGoTo { .. } if !app.profile.allows_feature(crate::features::Feature::App) || !app.profile.allows_id("file.open") => {
+            app.notify(tl!("Not allowed"));
+        }
         LinkTarget::RemoteGoTo { file, destination, .. } => return Some((view_id, file, destination)),
         LinkTarget::Other(s) => app.notify_fmt("This PDF uses the unsupported {s} action.", &[("s", &s)]),
     }
@@ -2862,7 +3051,8 @@ pub fn document_area(app: &mut PdfCraftApp, index: usize, ui: &mut egui::Ui) {
         app.views[index].print_pages.clear();
     }
     // The Prepare a form panel is open (or a field tool is picked): fields are edited, not filled.
-    let preparing = app.is_preparing();
+    // Not when the profile has no form design.
+    let preparing = app.is_preparing() && app.profile.allows_feature(crate::features::Feature::FormDesign);
     // Prepare a form ▸ Calculation order: the order's steps and links on the page.
     let calc_order = preparing && app.left_open && app.left == crate::LeftPanel::CalculationOrder;
     // Edit a PDF: added text and images can be selected, moved and edited.
@@ -2976,6 +3166,9 @@ pub fn document_area(app: &mut PdfCraftApp, index: usize, ui: &mut egui::Ui) {
     let form = doc.form.clone();
     let generation = doc.edit_generation();
     let can_fill = doc.allows_form_filling();
+    // What the profile offers here; what it refuses is not drawn, and does nothing.
+    let offers = Offers::of(&app.profile, tool);
+    let link_on = offers.link;
     let can_crop = doc.allows_assembly();
     let signature = app.signature.clone();
     let initials = app.initials.clone();
@@ -3068,6 +3261,7 @@ pub fn document_area(app: &mut PdfCraftApp, index: usize, ui: &mut egui::Ui) {
         fill_text_color: app.fill_text_color,
         today,
         can_paste_image,
+        offers,
     };
     let mut page_out = PageOut::default();
     let out = page_scroll(ui, scroll, egui::Id::unique(("page-view-scope", view.id)), app.show_page_edge_shadows, |ui, viewport| {
@@ -3133,7 +3327,7 @@ pub fn document_area(app: &mut PdfCraftApp, index: usize, ui: &mut egui::Ui) {
     if editing_content {
         crate::content_ui::keys(ui.ctx(), view, tool == QuickTool::EditText);
     }
-    if tool == QuickTool::Link {
+    if tool == QuickTool::Link && link_on {
         crate::link_ui::keys(ui.ctx(), view);
     } else {
         view.links.selected = None;
@@ -3247,7 +3441,7 @@ fn apply_frame_requests(app: &mut PdfCraftApp, index: usize, ui: &mut egui::Ui, 
         let doc = app.views[index].id;
         app.comment_attachment_action(doc, p, i, open);
     }
-    if let Some((name, w)) = field_props {
+    if let Some((name, w)) = field_props.filter(|_| app.profile.allows_id("form.field.properties")) {
         app.open_field_props(&name, w);
     }
     if let Some(FieldMenu::Duplicate(name)) = field_menu {
@@ -3319,7 +3513,9 @@ fn apply_frame_requests(app: &mut PdfCraftApp, index: usize, ui: &mut egui::Ui, 
         }
         None => {}
     }
-    match page_action {
+    // What the profile refuses does nothing, though the menu doesn't offer it.
+    let page_menu = PageMenuOffers::of(&app.profile);
+    match page_action.filter(|a| page_menu.offers(a)) {
         Some(PageMenuAction::Copy) => {
             if let Some(sel) = app.views[index].image_selection.clone() {
                 app.copy_page_image(sel.page, sel.index);
@@ -3393,7 +3589,7 @@ fn apply_frame_requests(app: &mut PdfCraftApp, index: usize, ui: &mut egui::Ui, 
     if let Some(why) = refused {
         app.notify_error(why);
     }
-    if open_signature || open_initials {
+    if open_signature && app.profile.allows_id("sign.fill.signature") || open_initials && app.profile.allows_id("sign.fill.initials") {
         app.signature_draft = crate::fill_sign::SigDraft::new(open_initials, &app.comment_prefs.author);
         app.dialog = Some(crate::Dialog::Signature);
     }
@@ -3423,9 +3619,9 @@ fn apply_frame_requests(app: &mut PdfCraftApp, index: usize, ui: &mut egui::Ui, 
     if copy_selected {
         app.execute("edit.copy");
     }
-    // Read mode hides the tools (#2646), and full screen is the page and nothing else (#1459);
-    // the quick tools come back with the window.
-    if app.mode != crate::Mode::Read && !app.full_screen {
+    // Read mode hides the tools (#2646), full screen is the page and nothing else (#1459), and
+    // the profile can hide them too; the quick tools come back with the window.
+    if app.mode != crate::Mode::Read && !app.full_screen && app.profile.shows_part(crate::profile::parts::QUICK_BAR) {
         // The page nearest the left edge, whose margin the bar sits in.
         let page_left = app.views[index].screen_rects.iter().map(|(_, r)| r.left()).reduce(f32::min);
         quick_bar(app, avail, page_left, ui);

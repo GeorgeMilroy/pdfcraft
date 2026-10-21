@@ -152,6 +152,28 @@ fn toggle_edit(f: &FormField, w: &FormWidget) -> Option<Edit> {
     Some(Edit::SetFieldValue { name: f.name.clone(), value })
 }
 
+/// What the profile lets the pointer do with fields. A field it refuses is inert: it shows its
+/// value and takes no click, as if it were printed on the page.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct FieldOffers {
+    /// Filling in fields (the formFill feature).
+    pub fill: bool,
+    /// Signing an empty signature field (the digitalSignatures feature).
+    pub sign: bool,
+}
+
+impl FieldOffers {
+    /// Whether the profile offers `f` to the pointer. Push buttons stay: each of their actions is
+    /// gated where it runs.
+    pub(crate) fn offers(self, f: &FormField) -> bool {
+        match f.kind {
+            FormFieldKind::PushButton => true,
+            FormFieldKind::Signature => self.sign,
+            _ => self.fill,
+        }
+    }
+}
+
 /// Whether `w`, a widget of `f`, takes a press: fillable, a push button with an action, or an
 /// empty signature field (signed by clicking it, Use a certificate). A radio button of a group can
 /// be read-only on its own.
@@ -162,12 +184,12 @@ fn usable(f: &FormField, w: &FormWidget, allowed: bool) -> bool {
 
 /// The form widget under `p` on `page`: the one hit test of the fields, for the cursor and the
 /// press. Over the page's text too: a check box drawn with a glyph, or set on printed text, is a
-/// button, not text to select.
-pub(crate) fn hit(xf: &PageXform, info: &DocInfo, page: usize, form: &[FormField], allowed: bool, p: Pos2) -> Option<Hit> {
+/// button, not text to select. A field the profile refuses (`offers`) is not hit.
+pub(crate) fn hit(xf: &PageXform, info: &DocInfo, page: usize, form: &[FormField], allowed: bool, offers: FieldOffers, p: Pos2) -> Option<Hit> {
     if !xf.rect.contains(p) {
         return None;
     }
-    let (field, f, widget, w) = form.iter().enumerate().find_map(|(fi, f)| {
+    let (field, f, widget, w) = form.iter().enumerate().filter(|(_, f)| offers.offers(f)).find_map(|(fi, f)| {
         f.widgets
             .iter()
             .enumerate()
@@ -200,13 +222,14 @@ pub(crate) fn page_input(
     cx: PageToolContext<'_>,
     form: &[FormField],
     allowed: bool,
+    offers: FieldOffers,
     press: PagePress,
     released_over: bool,
     view: &mut DocView,
 ) -> bool {
     let PageToolContext { ui, resp, xf, ptr, page, info, .. } = cx;
     let PagePress::Mine(Owner::Field { field, widget: wi }) = press else { return false };
-    let Some((f, w)) = form.get(field).and_then(|f| f.widgets.get(wi).map(|w| (f, w))) else { return false };
+    let Some((f, w)) = form.get(field).filter(|f| offers.offers(f)).and_then(|f| f.widgets.get(wi).map(|w| (f, w))) else { return false };
     let usable = usable(f, w, allowed);
     // A text field opens on the press rather than the click, so a drag that starts on it
     // selects its text (#2213).

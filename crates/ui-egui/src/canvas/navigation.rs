@@ -385,14 +385,19 @@ pub fn shortcuts(view: &mut DocView, ctx: &egui::Context, speed: crate::scroll_s
         view.rotate_view(false);
     }
     zoom_shortcuts(view, &pressed);
+    // ⌘[ / ⌘] run as registered commands; one that reaches here has no view to go to or is
+    // refused by the profile, and is only consumed.
+    let _ = pressed(cmd(Key::OpenBracket)) || pressed(cmd(Key::CloseBracket));
     // Alt+← / Alt+→ (⌥ on macOS) too, as in Acrobat and browsers, back to where a link was
     // followed from (#3632). Consumed here, before ← / → turn the page. egui matches the pattern
-    // logically, so an extra Shift is ignored and Shift+Alt+← goes back as well (harmless).
+    // logically, so an extra Shift is ignored and Shift+Alt+← goes back as well (harmless). Only
+    // what the profile allows: a refused key is left alone.
     let alt = |k| KeyboardShortcut::new(Modifiers::ALT, k);
-    if pressed(cmd(Key::OpenBracket)) || pressed(alt(Key::ArrowLeft)) {
+    let profile = crate::dialogs::frame_profile(ctx);
+    if profile.allows_id("view.previous_view") && pressed(alt(Key::ArrowLeft)) {
         view.view_history(false);
     }
-    if pressed(cmd(Key::CloseBracket)) || pressed(alt(Key::ArrowRight)) {
+    if profile.allows_id("view.next_view") && pressed(alt(Key::ArrowRight)) {
         view.view_history(true);
     }
     let key = |k| (arrows || !matches!(k, Key::ArrowLeft | Key::ArrowRight | Key::ArrowUp | Key::ArrowDown)) && ctx.input(|i| i.key_pressed(k));
