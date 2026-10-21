@@ -235,13 +235,15 @@ fn hiding(ids: &[&str]) -> UiProfile {
 #[test]
 fn a_dialog_stays_open_while_any_command_that_opens_it_is_allowed() {
     use pdfcraft_ui_egui::PropsTab;
-    // Properties: either command opens it, and its tabs switch inside it.
+    // Properties: either command opens it, on a tab of a command allowed (Security is
+    // protect.properties, the others file.properties).
     for hidden in ["protect.properties", "file.properties"] {
         let mut h = harness(hiding(&[hidden]));
+        let kept = if hidden == "file.properties" { PropsTab::Security } else { PropsTab::Description };
         for tab in [PropsTab::Description, PropsTab::Security] {
             h.state_mut().dialog = Some(Dialog::Properties(tab));
             h.run_steps(2);
-            assert_eq!(h.state().dialog, Some(Dialog::Properties(tab)), "{tab:?} closed with {hidden} hidden");
+            assert_eq!(h.state().dialog, Some(Dialog::Properties(kept)), "{tab:?} with {hidden} hidden");
         }
     }
     let mut h = harness(hiding(&["file.properties", "protect.properties"]));

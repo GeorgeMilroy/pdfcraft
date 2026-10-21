@@ -477,6 +477,20 @@ pub enum PropsTab {
     Advanced,
 }
 
+impl PropsTab {
+    /// Every tab, in the order the dialog shows them.
+    pub const ALL: [Self; 5] = [Self::Description, Self::InitialView, Self::Security, Self::Fonts, Self::Advanced];
+
+    /// The command that opens this tab: Security is `protect.properties`, the rest
+    /// `file.properties`. The tab shows only while the profile allows it.
+    pub fn command(self) -> &'static str {
+        match self {
+            Self::Security => "protect.properties",
+            Self::Description | Self::InitialView | Self::Fonts | Self::Advanced => "file.properties",
+        }
+    }
+}
+
 /// Duplicate Field: the field and the pages (all, or a range, 1-based).
 #[derive(Clone, Debug, PartialEq)]
 pub struct DuplicateDraft {
@@ -1487,10 +1501,12 @@ impl PdfCraftApp {
         {
             view.open_organize();
         }
+        // A workspace the profile refuses is All tools, as `select_mode` makes it.
+        let allowed = |app: &Self, mode: Mode| if app.allows_mode(mode) { mode } else { Mode::AllTools };
         if activate && let Some(mode) = self.mode_override {
             // Explicit mode options do not reset independent --tool / --left choices.
-            self.mode = mode;
-        } else if activate && self.mode != self.default_mode {
+            self.mode = allowed(self, mode);
+        } else if activate && self.mode != allowed(self, self.default_mode) {
             // Switch workspace like the mode bar, but a left panel the user (or `--left closed`)
             // closed stays closed, and an unchanged mode keeps the tool panel the user chose.
             let left_open = self.left_open;
@@ -2289,6 +2305,10 @@ impl PdfCraftApp {
     pub fn set_profile(&mut self, profile: profile::UiProfile) {
         self.profile = profile;
         self.enforce_profile();
+        // A host may set it between `logic` and `ui`: this frame's panels draw with it.
+        if let Some(ctx) = self.ctx.clone() {
+            dialogs::publish_profile(self, &ctx);
+        }
     }
 
     /// Puts down what the profile doesn't allow (after it changed; checked every frame too): an
@@ -2314,6 +2334,23 @@ impl PdfCraftApp {
             self.form_preview = false;
         }
         if self.dialog.is_some_and(|d| !self.allows_dialog(d)) {
+            self.dialog = None;
+        }
+        // Signing and certifying are separate commands: the one the draft is for must be allowed.
+        if self.dialog == Some(Dialog::Sign)
+            && let Some(d) = &self.sign_draft
+            && !self.profile.allows_id(if d.certify.is_some() { "sign.certify" } else { "sign.digital" })
+        {
+            self.dialog = None;
+        }
+        // A Properties tab the profile refuses gives way to one it allows (the dialog is open, so
+        // one is).
+        if let Some(Dialog::Properties(tab)) = self.dialog
+            && !self.profile.allows_id(tab.command())
+        {
+            self.dialog = PropsTab::ALL.into_iter().find(|t| self.profile.allows_id(t.command())).map(Dialog::Properties);
+        }
+        if self.dialog == Some(Dialog::CreateStamp) && !self.manages_custom_stamps() {
             self.dialog = None;
         }
         if !self.allows_mode(self.mode) {
@@ -2843,7 +2880,11 @@ impl PdfCraftApp {
                 let refused = match value {
                     "sign" => !self.profile.allows_id("sign.digital"),
                     "certify" => !self.profile.allows_id("sign.certify"),
-                    _ => candidate.is_some_and(|d| !self.allows_dialog(d)),
+                    _ => match candidate {
+                        // Each Properties tab is its command's.
+                        Some(Dialog::Properties(tab)) => !self.profile.allows_id(tab.command()),
+                        d => d.is_some_and(|d| !self.allows_dialog(d)),
+                    },
                 };
                 if refused {
                     return Err(format!("the profile doesn't allow the {value} dialog"));
@@ -3436,6 +3477,8 @@ impl eframe::App for PdfCraftApp {
 
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
+        // The profile may have changed since `logic` (a host assigning it): draw with it.
+        dialogs::publish_profile(self, &ctx);
         i18n::set_current(i18n::Lang::from_pref(&self.language));
         // Fonts registered via set_fonts only take effect next frame; named families would panic now.
         if !self.fonts_ready {
