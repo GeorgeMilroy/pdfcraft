@@ -51,6 +51,7 @@ impl PdfCraftApp {
     /// Attach file: ask for a file (or take `attach_override`) and attach it at `at`.
     pub fn attach_file_comment(&mut self, page: usize, at: [f64; 2]) {
         if !self.profile.allows_id("comment.attach") {
+            self.notify(tl!("Not allowed"));
             return;
         }
         match self.attach_override.take() {
@@ -94,6 +95,7 @@ impl PdfCraftApp {
     /// opacity and line width.
     pub fn make_comment_default(&mut self, page: usize, index: usize) {
         if !self.may_change_comment(page, index) {
+            self.notify(tl!("Not allowed"));
             return;
         }
         let Some(p) = self.active_ids().and_then(|(_, id)| self.session.get(id)).and_then(|doc| doc.comment_props(page, index)) else { return };
@@ -126,6 +128,7 @@ impl PdfCraftApp {
     /// Open Comment Properties for the comment at `(page, index)` of the active document.
     pub fn open_comment_props(&mut self, page: usize, index: usize) {
         if !self.may_change_comment(page, index) {
+            self.notify(tl!("Not allowed"));
             return;
         }
         let Some((_, id)) = self.active_ids() else { return };

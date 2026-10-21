@@ -145,7 +145,8 @@ pub(crate) fn page_input(
         let (vx, vy) = xf.screen_to_view(pos);
         let [x, y] = info.view_to_user(vx, vy);
         let mut point = [f64::from(x), f64::from(y)];
-        if state.snap_enabled {
+        // Snapping is its own command: refused, the pointer measures where it is.
+        if state.snap_enabled && crate::dialogs::frame_profile(ui.ctx()).allows_id("measure.snap") {
             if state.paths.as_ref().is_none_or(|(p, g, _)| *p != page || *g != doc.edit_generation()) {
                 state.paths = Some((page, doc.edit_generation(), doc.measurement_paths(page)));
             }
