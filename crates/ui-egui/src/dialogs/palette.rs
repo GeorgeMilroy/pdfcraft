@@ -49,6 +49,11 @@ pub fn show(app: &mut PdfCraftApp, ctx: &egui::Context) {
     if !app.palette_open {
         return;
     }
+    // The search box and its palette are the profile's to hide.
+    if !app.shows_command("view.palette") {
+        app.palette_open = false;
+        return;
+    }
     let t = Tokens::get(ctx);
     if ctx.input(|i| i.key_pressed(egui::Key::Escape)) {
         app.palette_open = false;
@@ -58,7 +63,7 @@ pub fn show(app: &mut PdfCraftApp, ctx: &egui::Context) {
     let mut hits: Vec<(usize, Hit)> = Vec::new();
     let active = app.active_ids().map(|(_, id)| id);
     for spec in pdfcraft_engine::commands::COMMANDS {
-        if !app.profile.allows_command(spec) {
+        if !app.shows_command(spec.id) {
             continue;
         }
         if !crate::brand::current().community_links && pdfcraft_engine::links::for_command(spec.id).is_some() {
@@ -84,7 +89,7 @@ pub fn show(app: &mut PdfCraftApp, ctx: &egui::Context) {
         }
     }
     for g in TOOL_GROUPS {
-        if app.profile.hides_group(g.id) {
+        if !app.shows_tool_group(g.id) {
             continue;
         }
         if let Some(s) = score(tl!(g.label), &q).or_else(|| score(g.label, &q)) {
@@ -104,6 +109,9 @@ pub fn show(app: &mut PdfCraftApp, ctx: &egui::Context) {
             for i in sec.items {
                 if pdfcraft_engine::commands::command(i.command).is_some() {
                     continue; // listed above as a command
+                }
+                if !app.profile.shows_item(i) {
+                    continue;
                 }
                 if let Some(s) = score(tl!(i.label), &q).or_else(|| score(i.label, &q)).or_else(|| score(i.command, &q).map(|s| s + 50)) {
                     hits.push((

@@ -63,30 +63,91 @@ impl PdfCraftApp {
         self.enforce_profile();
     }
 
-    /// Puts down what the profile doesn't allow (after it changed).
+    /// Puts down what the profile doesn't allow (after it changed; checked every frame too): an
+    /// armed tool, an open panel, tool group or dialog, the find bar, the page grid, form
+    /// preparation and the Combine files tab.
     pub(crate) fn enforce_profile(&mut self) {
         if self.right.is_some_and(|p| !self.profile.shows_panel(p)) {
             self.choose_right_panel(None);
         }
+        if self.quick_tool.command().is_some_and(|id| !self.profile.allows_id(id)) {
+            if matches!(self.quick_tool, QuickTool::EditText | QuickTool::AddText) {
+                self.put_down_edit_text();
+            } else {
+                self.quick_tool = QuickTool::Select;
+            }
+        }
+        if let LeftPanel::Tool(id) = self.left
+            && !self.shows_tool_group(id)
+        {
+            self.left = LeftPanel::AllTools;
+        }
+        if self.form_preview && !self.profile.allows_feature(features::Feature::FormDesign) {
+            self.form_preview = false;
+        }
+        if self.dialog.is_some_and(|d| d.command().is_some_and(|id| !self.profile.allows_id(id))) {
+            self.dialog = None;
+        }
+        let (find, organize) = (self.profile.allows_id("edit.find"), self.shows_command("page.organize"));
+        for view in &mut self.views {
+            if !find {
+                view.find = None;
+            }
+            if !organize {
+                view.organize = false;
+            }
+        }
+        if self.palette_open && !self.shows_command("view.palette") {
+            self.palette_open = false;
+        }
+        if self.combine_tab.open && !self.profile.allows_id("page.combine") {
+            self.close_combine_tab();
+        }
+    }
+
+    /// Whether a command shows and runs in this profile: [`profile::UiProfile::allows_id`], and
+    /// what only the app knows. Read mode can't be left in a view-only profile, the palette
+    /// belongs to the search box, and the page grid is for changing pages.
+    pub(crate) fn shows_command(&self, id: &str) -> bool {
+        self.profile.allows_id(id)
+            && match id {
+                "view.read_mode" => !self.profile.read_only,
+                "view.palette" => self.profile.shows_part(profile::parts::SEARCH),
+                "page.organize" => self.profile.allows_feature(features::Feature::Pages),
+                "ui.dock.reset" => !self.profile.lock_layout,
+                "view.tools_pane" => self.profile.shows_part(profile::parts::TOOLS_PANEL),
+                _ => true,
+            }
+    }
+
+    /// Whether the tool group `id` shows: [`profile::UiProfile::shows_group`], and the feature the
+    /// group serves is on (a group can keep entries that only copy, such as Extract pages, after
+    /// its feature is gone).
+    pub(crate) fn shows_tool_group(&self, id: &str) -> bool {
+        pdfcraft_engine::catalog::group(id).is_some_and(|g| self.profile.shows_group(g))
+            && features::group_feature(id).is_none_or(|f| self.profile.allows_feature(f))
     }
 
     /// Enter a tool from the catalogue, Home, palette or control channel. Organize is a
     /// workspace, so opening its panel also opens the page grid (without toggling it off).
-    pub(crate) fn select_tool(&mut self, id: &'static str) {
-        if self.profile.hides_group(id) {
-            return;
+    /// False when the profile doesn't show the group.
+    pub(crate) fn select_tool(&mut self, id: &'static str) -> bool {
+        if !self.shows_tool_group(id) {
+            return false;
         }
         // The tool's panel shows, not the expanded All tools view over it.
         self.all_tools_full = false;
         self.left = LeftPanel::Tool(id);
         self.reveal_tools();
+        let organize = id == "organize" && self.shows_command("page.organize");
         if let Some(view) = self.active.and_then(|i| self.views.get_mut(i)) {
-            if id == "organize" {
+            if organize {
                 view.open_organize();
             } else {
                 view.organize = false;
             }
         }
+        true
     }
 
     /// Select the workspace and its matching tool panel, just like the mode bar. The tool goes
@@ -97,10 +158,8 @@ impl PdfCraftApp {
         if let Some(view) = self.active.and_then(|i| self.views.get_mut(i)) {
             view.organize = false;
         }
-        self.left = match mode {
-            Mode::Edit => LeftPanel::Tool("edit"),
-            Mode::Convert => LeftPanel::Tool("export"),
-            Mode::Sign => LeftPanel::Tool("fill_sign"),
+        self.left = match mode.tool_group() {
+            Some(id) if self.shows_tool_group(id) => LeftPanel::Tool(id),
             _ => LeftPanel::AllTools,
         };
     }
@@ -116,7 +175,7 @@ impl PdfCraftApp {
         if mode != Mode::AllTools {
             self.all_tools_full = false;
         }
-        if mode == Mode::Edit {
+        if mode == Mode::Edit && self.profile.allows_id("edit.edit_text") {
             self.quick_tool = QuickTool::EditText;
         } else if matches!(self.quick_tool, QuickTool::EditText | QuickTool::AddText) {
             self.put_down_edit_text();
@@ -186,6 +245,9 @@ impl PdfCraftApp {
     /// keeps comment tools from reopening it; opening it again lets them (#225). A choice made in
     /// Read mode replaces the pane saved on the way in, so leaving Read mode doesn't undo it.
     pub fn choose_right_panel(&mut self, panel: Option<RightPanel>) {
+        if panel.is_some_and(|p| !self.profile.shows_panel(p)) {
+            return;
+        }
         if self.mode == Mode::Read {
             self.right_before_read = None;
         }
@@ -207,6 +269,15 @@ impl PdfCraftApp {
 
     /// F4: closes the side panel, or reopens the one open last.
     pub(crate) fn toggle_side_panel(&mut self) {
-        self.choose_right_panel(if self.right.is_some() { None } else { Some(self.last_right) });
+        if self.right.is_some() {
+            self.choose_right_panel(None);
+            return;
+        }
+        // The last panel, or the first one the profile shows when it hides that one.
+        use RightPanel::*;
+        let panel = std::iter::once(self.last_right)
+            .chain([Comments, Bookmarks, Pages, Fields, Layers, Attachments, Signatures, Tags, Search])
+            .find(|p| self.profile.shows_panel(*p));
+        self.choose_right_panel(panel);
     }
 }

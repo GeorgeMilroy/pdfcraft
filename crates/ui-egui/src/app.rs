@@ -41,8 +41,10 @@ impl PdfCraftApp {
         let dirty = self.active.is_some_and(|i| self.has_unsaved_work(i));
         let mark = if dirty { " •" } else { "" };
         let titled = |name: Option<String>| {
-            name.or_else(|| self.combine_showing().then(|| tl!("Combine files").to_owned()))
-                .map_or_else(|| crate::brand::current().window_title(None), |name| crate::brand::current().window_title(Some(&format!("{name}{mark}"))))
+            name.or_else(|| self.combine_showing().then(|| tl!("Combine files").to_owned())).map_or_else(
+                || crate::brand::current().window_title(None),
+                |name| crate::brand::current().window_title(Some(&format!("{name}{mark}"))),
+            )
         };
         let title = titled(self.active.and_then(|i| crate::canvas::tab_label(self, i)));
         // The web page's title is what an embedding host reads to tell which file opened, so it
@@ -306,11 +308,12 @@ impl PdfCraftApp {
     }
 
     /// Fields are being edited (Prepare a form or its Calculation order is open, or a field tool
-    /// is picked), unless the form is being previewed.
+    /// is picked), unless the form is being previewed, and the profile lets forms be designed.
     pub fn is_preparing(&self) -> bool {
         ((self.left_open && matches!(self.left, LeftPanel::Tool("form") | LeftPanel::CalculationOrder))
             || matches!(self.quick_tool, QuickTool::Field(_)))
             && !self.form_preview
+            && self.profile.allows_feature(features::Feature::FormDesign)
     }
 
     /// A number that changes whenever the open dialog changes (opened, closed or replaced by
@@ -464,6 +467,9 @@ impl eframe::App for PdfCraftApp {
                 self.quick_tool = QuickTool::Select;
             }
         }
+        // Whatever set it (the control channel, a host assigning the profile), nothing the
+        // profile refuses stays open or armed.
+        self.enforce_profile();
         #[cfg(not(target_arch = "wasm32"))]
         {
             if let Some(worker) = &self.open_worker {
@@ -512,7 +518,7 @@ impl eframe::App for PdfCraftApp {
         #[cfg(not(target_arch = "wasm32"))]
         let dropped = self.drop_on_grid(dropped, ctx);
         for f in dropped {
-            if self.profile.hides("file.open") {
+            if !self.profile.allows_id("file.open") {
                 continue;
             }
             // Files dropped on the Combine files tab join its list instead of opening.
