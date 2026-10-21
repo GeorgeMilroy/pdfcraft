@@ -42,10 +42,12 @@ impl PdfCraftApp {
     /// Apply an edit to the active document. Returns `true` on success; failures are shown.
     pub fn apply_edit(&mut self, edit: Edit) -> bool {
         let Some((i, id)) = self.active_ids() else { return false };
-        if !self.profile.allows_edit(&edit) {
+        let annotation = |page: usize, index: usize| self.annotation_feature(id, page, index);
+        if !self.profile.allows_edit_in(&edit, &annotation) {
             self.notify(tl!("Not allowed"));
             return false;
         }
+        let used = crate::features::edit_features(&edit, &annotation);
         let label = edit.label();
         let (form_before, page_count_before, had_xfa) = if let Some(d) = self.session.get(id) {
             (Some(std::sync::Arc::clone(&d.form)), d.info.pages.len(), d.xfa.is_some())
@@ -54,6 +56,7 @@ impl PdfCraftApp {
         };
         match self.session.apply(id, edit.clone()) {
             Ok(()) => {
+                self.edit_log.entry(id).or_default().applied(label.as_str(), used);
                 let Some(doc) = self.session.get(id) else { return true };
                 let info = &doc.info;
                 let view = &mut self.views[i];
@@ -219,12 +222,16 @@ impl PdfCraftApp {
 
     fn history_step(&mut self, undo: bool) {
         let Some((i, id)) = self.active_ids() else { return };
-        if self.profile.read_only {
+        if !self.history_allowed(undo) {
+            if !self.profile.read_only {
+                self.notify(tl!("Not allowed"));
+            }
             return;
         }
         let result = if undo { self.session.undo(id) } else { self.session.redo(id) };
         match result {
             Ok(label) => {
+                self.edit_log.entry(id).or_default().stepped(undo);
                 if let Some(doc) = self.session.get(id) {
                     self.views[i].document_changed(&doc.info);
                 }
@@ -238,6 +245,31 @@ impl PdfCraftApp {
             }
             Err(e) => self.notify_error(e),
         }
+    }
+
+    /// Whether Undo (or Redo) may run: never in a read-only profile and, when the profile limits
+    /// features, only if the step is one this app applied with features still allowed (so a
+    /// comments-only profile can't undo a page change made before it).
+    pub(crate) fn history_allowed(&self, undo: bool) -> bool {
+        if self.profile.read_only {
+            return false;
+        }
+        if self.profile.features.is_none() {
+            return true;
+        }
+        let Some((_, id)) = self.active_ids() else { return false };
+        let Some(doc) = self.session.get(id) else { return false };
+        let label = if undo { doc.undo_label() } else { doc.redo_label() };
+        // Nothing to step: the engine says so.
+        let Some(label) = label else { return true };
+        self.edit_log.get(&id).and_then(|log| log.top(undo, label.as_str())).is_some_and(|used| used.iter().all(|f| self.profile.allows_feature(f)))
+    }
+
+    /// The feature of the annotation at (page, index) of document `id`.
+    pub(crate) fn annotation_feature(&self, id: pdfcraft_engine::DocId, page: usize, index: usize) -> Option<crate::features::Feature> {
+        let doc = self.session.get(id)?;
+        let a = doc.info.annotations.iter().find(|a| a.page == page && a.index == index)?;
+        Some(crate::features::annotation_feature(&a.subtype, a.intent.as_deref(), a.fill_sign))
     }
 
     /// Apply any edit a view queued this frame (organize toolbar, keys).
@@ -1589,5 +1621,38 @@ mod content_page_tests {
         assert_eq!(content_page(&moved), Some(3));
         assert_eq!(content_page(&Edit::RotatePages { pages: vec![0], degrees: 90 }), None);
         assert_eq!(content_page(&Edit::SetInfo { key: "Title".into(), value: "x".into() }), None);
+    }
+}
+
+/// The features each undoable step used, beside a document's undo history (which keeps
+/// snapshots, not edits), so a profile can refuse undoing what it doesn't allow. One entry per
+/// step this app applied; a step it didn't record (applied elsewhere) leaves the labels apart,
+/// and [`PdfCraftApp::history_allowed`] then refuses rather than guess.
+#[derive(Debug, Default)]
+pub(crate) struct EditLog {
+    undo: Vec<(String, crate::features::FeatureSet)>,
+    redo: Vec<(String, crate::features::FeatureSet)>,
+}
+
+impl EditLog {
+    pub(crate) fn applied(&mut self, label: &str, used: crate::features::FeatureSet) {
+        self.undo.push((label.to_owned(), used));
+        // As the engine's history (MAX_UNDO), give or take: only the top is ever compared.
+        if self.undo.len() > 200 {
+            self.undo.remove(0);
+        }
+        self.redo.clear();
+    }
+
+    pub(crate) fn stepped(&mut self, undo: bool) {
+        let (from, to) = if undo { (&mut self.undo, &mut self.redo) } else { (&mut self.redo, &mut self.undo) };
+        if let Some(step) = from.pop() {
+            to.push(step);
+        }
+    }
+
+    fn top(&self, undo: bool, label: &str) -> Option<crate::features::FeatureSet> {
+        let steps = if undo { &self.undo } else { &self.redo };
+        steps.last().filter(|(l, _)| l == label).map(|(_, used)| *used)
     }
 }
