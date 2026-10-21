@@ -292,9 +292,17 @@ fn panel_body(app: &mut PdfCraftApp, ui: &mut egui::Ui, _t: &Tokens) {
         return;
     };
     let mut tool = None;
+    // What the profile lets the panel offer.
+    let scales = app.profile.allows_id("measure.scale");
+    let snaps = app.profile.allows_id("measure.snap");
+    let exports = app.profile.allows_id("measure.export");
     ui.horizontal(|ui| {
-        for (label, value) in [("Distance", Tool::Distance), ("Perimeter", Tool::Perimeter), ("Area", Tool::Area)] {
-            if ui.selectable_label(app.quick_tool == QuickTool::Measure(value), tl!(label)).clicked() {
+        for (label, value, id) in [
+            ("Distance", Tool::Distance, "measure.distance"),
+            ("Perimeter", Tool::Perimeter, "measure.perimeter"),
+            ("Area", Tool::Area, "measure.area"),
+        ] {
+            if app.profile.allows_id(id) && ui.selectable_label(app.quick_tool == QuickTool::Measure(value), tl!(label)).clicked() {
                 tool = Some(value);
             }
         }
@@ -338,8 +346,10 @@ fn panel_body(app: &mut PdfCraftApp, ui: &mut egui::Ui, _t: &Tokens) {
         ui.add(crate::widgets::line(&mut state.label).desired_width(130.0).char_limit(128));
     });
     ui.separator();
-    ui.add(widgets::checkbox(&mut state.snap_enabled, tl!("Snap to drawing")));
-    if state.snap_enabled {
+    if snaps {
+        ui.add(widgets::checkbox(&mut state.snap_enabled, tl!("Snap to drawing")));
+    }
+    if snaps && state.snap_enabled {
         ui.horizontal(|ui| {
             ui.add(widgets::checkbox(&mut state.snaps.endpoints, tl!("Endpoints")));
             ui.add(widgets::checkbox(&mut state.snaps.midpoints, tl!("Midpoints")));
@@ -350,35 +360,39 @@ fn panel_body(app: &mut PdfCraftApp, ui: &mut egui::Ui, _t: &Tokens) {
         });
         ui.add(egui::Slider::new(&mut state.sensitivity, 1.0..=20.0).text(tl!("Sensitivity")));
     }
-    ui.separator();
-    ui.label(tl!("Drawing scale"));
-    ui.horizontal(|ui| {
-        ui.add(egui::DragValue::new(&mut state.drawing_points).range(0.000001..=1e9).prefix("pt "));
-        ui.label("=");
-        ui.add(egui::DragValue::new(&mut state.real_distance).range(0.000001..=1e12));
-    });
-    ui.horizontal(|ui| {
-        ui.label(tl!("Unit"));
-        ui.add(crate::widgets::line(&mut state.unit).desired_width(64.0).char_limit(12));
-        ui.add(egui::DragValue::new(&mut state.precision).range(0..=6).prefix(format!("{} ", tl!("Decimals"))));
-    });
-    if ui.button(tl!("Calibrate from two points")).clicked() {
-        tool = Some(Tool::Calibrate);
-    }
-    ui.add(widgets::checkbox(&mut state.whole_page, tl!("Entire page")));
-    if !state.whole_page {
-        ui.label(tl!("Viewport rectangle in page points (x, y, width, height)"));
-        for (i, name) in ["X", "Y", "Width", "Height"].iter().enumerate() {
-            if let Some(v) = state.rect.get_mut(i) {
-                ui.add(egui::DragValue::new(v).range(0.0..=1e9).prefix(format!("{}: ", tl!(name))));
+    // The drawing scale, its calibration and Apply scale set a scale (measure.scale).
+    let mut apply = false;
+    if scales {
+        ui.separator();
+        ui.label(tl!("Drawing scale"));
+        ui.horizontal(|ui| {
+            ui.add(egui::DragValue::new(&mut state.drawing_points).range(0.000001..=1e9).prefix("pt "));
+            ui.label("=");
+            ui.add(egui::DragValue::new(&mut state.real_distance).range(0.000001..=1e12));
+        });
+        ui.horizontal(|ui| {
+            ui.label(tl!("Unit"));
+            ui.add(crate::widgets::line(&mut state.unit).desired_width(64.0).char_limit(12));
+            ui.add(egui::DragValue::new(&mut state.precision).range(0..=6).prefix(format!("{} ", tl!("Decimals"))));
+        });
+        if ui.button(tl!("Calibrate from two points")).clicked() {
+            tool = Some(Tool::Calibrate);
+        }
+        ui.add(widgets::checkbox(&mut state.whole_page, tl!("Entire page")));
+        if !state.whole_page {
+            ui.label(tl!("Viewport rectangle in page points (x, y, width, height)"));
+            for (i, name) in ["X", "Y", "Width", "Height"].iter().enumerate() {
+                if let Some(v) = state.rect.get_mut(i) {
+                    ui.add(egui::DragValue::new(v).range(0.0..=1e9).prefix(format!("{}: ", tl!(name))));
+                }
             }
         }
+        ui.horizontal(|ui| {
+            ui.label(tl!("Viewport"));
+            ui.add(crate::widgets::line(&mut state.name).desired_width(130.0).char_limit(128));
+        });
+        apply = ui.add_enabled(doc.allows_annotation(), egui::Button::new(tl!("Apply scale"))).clicked();
     }
-    ui.horizontal(|ui| {
-        ui.label(tl!("Viewport"));
-        ui.add(crate::widgets::line(&mut state.name).desired_width(130.0).char_limit(128));
-    });
-    let apply = ui.add_enabled(doc.allows_annotation(), egui::Button::new(tl!("Apply scale"))).clicked();
     if let Some(error) = &state.error {
         ui.colored_label(Color32::from_rgb(190, 50, 50), error);
     }
@@ -406,7 +420,7 @@ fn panel_body(app: &mut PdfCraftApp, ui: &mut egui::Ui, _t: &Tokens) {
             ui.colored_label(Color32::from_rgb(190, 50, 50), e);
         }
     }
-    let export = ui.button(tl!("Export measurements as CSV")).clicked();
+    let export = exports && ui.button(tl!("Export measurements as CSV")).clicked();
     if apply && let Some(info) = info {
         let result =
             doc.measurement_to_user(page, [0.0, 0.0]).and_then(|a| doc.measurement_to_user(page, [1.0, 0.0]).map(|b| (a, b))).and_then(|(a, b)| {
@@ -434,7 +448,8 @@ fn panel_body(app: &mut PdfCraftApp, ui: &mut egui::Ui, _t: &Tokens) {
         app.views[index].measure.scale = Some(scale);
         app.quick_tool = QuickTool::Select;
     }
-    if let Some(tool) = tool {
+    // Only a tool the profile allows is armed (the buttons for the others aren't drawn).
+    if let Some(tool) = tool.filter(|t| QuickTool::Measure(*t).command().is_none_or(|id| app.profile.allows_id(id))) {
         app.views[index].measure.cancel();
         app.quick_tool = QuickTool::Measure(tool);
     }

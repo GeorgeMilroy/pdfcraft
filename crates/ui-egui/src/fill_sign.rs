@@ -524,6 +524,7 @@ pub(crate) fn script_preview(text: &str, w: usize, h: usize) -> egui::ColorImage
 }
 
 /// Saved previews and add/remove controls, shared by the left panel and quick-tool picker.
+/// Entries whose command the profile refuses are left out.
 pub(crate) fn signature_entries(ui: &mut egui::Ui, app: &mut crate::PdfCraftApp, t: &Tokens) -> Option<&'static str> {
     ui.set_width(ui.available_width().clamp(240.0, 248.0));
     let mut command = None;
@@ -534,6 +535,11 @@ pub(crate) fn signature_entries(ui: &mut egui::Ui, app: &mut crate::PdfCraftApp,
     .into_iter()
     .enumerate()
     {
+        // Nothing to manage for a signature that can't be placed.
+        if !app.profile.allows_id(use_id) {
+            continue;
+        }
+        let (change, remove) = (app.profile.allows_id(change_id), app.profile.allows_id(remove_id));
         let label = |template: &str| crate::i18n::fmt(tl!(template), &[("what", tl!(what))]);
         let Some(saved) = saved else {
             if crate::widgets::ghost_button(ui, "plus", &label("Add {what}")).clicked() {
@@ -557,10 +563,10 @@ pub(crate) fn signature_entries(ui: &mut egui::Ui, app: &mut crate::PdfCraftApp,
             if response.on_hover_text(label("Place saved {what}")).clicked() {
                 command = Some(use_id);
             }
-            if crate::icons::button(ui, "pencil", 26.0, false, &label("Change {what}")).clicked() {
+            if change && crate::icons::button(ui, "pencil", 26.0, false, &label("Change {what}")).clicked() {
                 command = Some(change_id);
             }
-            if crate::icons::button(ui, "x", 26.0, false, &label("Remove saved {what}")).clicked() {
+            if remove && crate::icons::button(ui, "x", 26.0, false, &label("Remove saved {what}")).clicked() {
                 command = Some(remove_id);
             }
         });
