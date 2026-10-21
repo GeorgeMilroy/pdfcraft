@@ -57,6 +57,8 @@ pub struct Brand {
     /// Whether the community links (Discord, web page, GitHub, website) appear: in Help, About,
     /// Home and the tab strip.
     pub community_links: bool,
+    /// Whether About shows PdfCraft's project credits (the Contributors and Models tabs).
+    pub credits: bool,
     /// The key the settings are stored under (eframe storage: localStorage on the web).
     pub storage_key: String,
 }
@@ -74,6 +76,7 @@ impl Default for Brand {
             about_text: None,
             about_url: None,
             community_links: true,
+            credits: true,
             storage_key: "pdfcraft".to_owned(),
         }
     }
