@@ -4300,7 +4300,7 @@ pub fn document_area(app: &mut PdfCraftApp, index: usize, ui: &mut egui::Ui) {
     }
     match clicked_link {
         Some(LinkTarget::Page(p, dest)) => view.go_to_dest(p, dest, info),
-        Some(LinkTarget::Uri(u)) => follow_url(app, &u, crate::LinkOrigin::Link),
+        Some(LinkTarget::Uri(u)) => app.request_document_url(&u, crate::LinkOrigin::Link),
         Some(LinkTarget::SetLayers { changes, preserve_rb }) => set_layers(app, index, &changes, preserve_rb),
         // Another file opens in a tab of its own: not without tabs and File ▸ Open.
         Some(LinkTarget::RemoteGoTo { .. }) if !app.profile.allows_feature(crate::features::Feature::App) || !app.profile.allows_id("file.open") => {
@@ -4558,15 +4558,6 @@ fn selection_actions(
     false
 }
 
-/// Open a web address from a link or a button, unless the profile turns such links off.
-fn follow_url(app: &mut PdfCraftApp, url: &str, origin: crate::LinkOrigin) {
-    if app.profile.external_links == Some(false) {
-        app.notify(tl!("Not allowed"));
-        return;
-    }
-    app.request_document_url(url, origin);
-}
-
 /// Run a push button's action (the ones that need no JavaScript engine).
 fn run_button(app: &mut PdfCraftApp, index: usize, name: &str, action: pdfcraft_engine::form_scripts::ButtonAction) {
     use crate::features::Feature;
@@ -4607,7 +4598,7 @@ fn run_button(app: &mut PdfCraftApp, index: usize, name: &str, action: pdfcraft_
             "LastPage" => app.views[index].go_to_page(pages.saturating_sub(1)),
             other => app.notify_fmt("{name}: the {other} action isn't supported yet", &[("name", name), ("other", other)]),
         },
-        B::Uri(u) => follow_url(app, &u, crate::LinkOrigin::Button),
+        B::Uri(u) => app.request_document_url(&u, crate::LinkOrigin::Button),
         B::GoTo(p) => app.views[index].go_to_page(p.min(pages.saturating_sub(1))),
         B::ShowHide { fields, hide } => {
             let listed = |n: &String| fields.iter().any(|f| n == f || n.starts_with(&format!("{f}.")));
@@ -4833,7 +4824,6 @@ fn notices(
     ui: &mut egui::Ui,
     t: &Tokens,
 ) -> Option<Notice> {
-    use crate::features::Feature;
     let info = &doc.info;
     let xfa = doc.xfa.as_ref();
     // The file changed on disk while this document has unsaved changes (#431): ask before
@@ -4853,7 +4843,8 @@ fn notices(
                     if icons::button(ui, "x", 22.0, false, tl!("Dismiss")).clicked() {
                         view.disk_changed = false;
                     }
-                    reload = profile.allows_save() && crate::widgets::pill_button(ui, tl!("Reload"), false).clicked();
+                    // Reload drops the unsaved changes, as File ▸ Revert does.
+                    reload = profile.allows_id("file.revert") && crate::widgets::pill_button(ui, tl!("Reload"), false).clicked();
                 });
             });
         });
@@ -4886,7 +4877,10 @@ fn notices(
     if let Some((icon, color, template, arg)) = signed {
         let mut open = false;
         notice_bar(ui, t, icon, color, crate::i18n::fmt(tl!(template), &[("by", &arg)]), |ui| {
-            if profile.shows_panel(RightPanel::Signatures) && crate::widgets::pill_button(ui, tl!("Signature panel"), false).clicked() {
+            if profile.shows_panel(RightPanel::Signatures)
+                && profile.allows_id("sign.panel")
+                && crate::widgets::pill_button(ui, tl!("Signature panel"), false).clicked()
+            {
                 open = true;
             }
         });
@@ -4975,8 +4969,7 @@ fn notices(
         if secured && profile.allows_id("file.properties") && crate::widgets::pill_button(ui, tl!("Security settings"), false).clicked() {
             open_security = true;
         }
-        if secured && doc.can_unlock() && profile.allows_feature(Feature::Security) && crate::widgets::pill_button(ui, tl!("Unlock…"), true).clicked()
-        {
+        if secured && doc.can_unlock() && profile.allows_id("protect.unlock") && crate::widgets::pill_button(ui, tl!("Unlock…"), true).clicked() {
             unlock = true;
         }
         if repaired
@@ -5363,7 +5356,8 @@ fn organize_toolbar(
     });
     // Keys act on the selection unless a text field or a dialog has them (Delete under
     // Preferences deleted the selected pages).
-    if editable && pages_on && unobstructed && !ui.ctx().egui_wants_keyboard_input() {
+    // Escape still clears the selection without the pages feature; the page changes need it.
+    if editable && unobstructed && !ui.ctx().egui_wants_keyboard_input() {
         use egui::{Key, Modifiers};
         let (del, esc) = ui.input_mut(|i| {
             (
@@ -5376,13 +5370,13 @@ fn organize_toolbar(
             let any = |f: &dyn Fn(&egui::Event) -> bool| i.events.iter().any(f);
             (any(&|e| matches!(e, egui::Event::Copy)), any(&|e| matches!(e, egui::Event::Cut)), any(&|e| matches!(e, egui::Event::Paste(_))))
         });
-        if copy && profile.allows_id("page.copy") || cut && profile.allows_id("page.cut") {
+        if pages_on && (copy && profile.allows_id("page.copy") || cut && profile.allows_id("page.cut")) {
             view.pending_action = Some(ViewAction::CopyPages { cut });
         }
-        if paste && profile.allows_id("page.paste") {
+        if pages_on && paste && profile.allows_id("page.paste") {
             view.pending_action = Some(ViewAction::PastePages);
         }
-        if del && targets.len() < n && profile.allows_id("page.delete") {
+        if pages_on && del && targets.len() < n && profile.allows_id("page.delete") {
             view.pending_edit = Some(Edit::DeletePages { pages: targets });
         }
         if esc {

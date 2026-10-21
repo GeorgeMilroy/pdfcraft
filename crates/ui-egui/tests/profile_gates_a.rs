@@ -227,3 +227,90 @@ fn menus_leave_out_what_the_profile_refuses() {
     assert!(shown(&h, "View ⏵"), "View keeps the zoom and page display");
     assert!(!shown(&h, "Help ⏵") && !shown(&h, "Pages ⏵"), "menus with nothing left in them");
 }
+
+fn hiding(ids: &[&str]) -> UiProfile {
+    UiProfile { hidden: ids.iter().map(|s| s.to_string()).collect(), ..UiProfile::default() }
+}
+
+#[test]
+fn a_dialog_stays_open_while_any_command_that_opens_it_is_allowed() {
+    use pdfcraft_ui_egui::PropsTab;
+    // Properties: either command opens it, and its tabs switch inside it.
+    for hidden in ["protect.properties", "file.properties"] {
+        let mut h = harness(hiding(&[hidden]));
+        for tab in [PropsTab::Description, PropsTab::Security] {
+            h.state_mut().dialog = Some(Dialog::Properties(tab));
+            h.run_steps(2);
+            assert_eq!(h.state().dialog, Some(Dialog::Properties(tab)), "{tab:?} closed with {hidden} hidden");
+        }
+    }
+    let mut h = harness(hiding(&["file.properties", "protect.properties"]));
+    h.state_mut().dialog = Some(Dialog::Properties(PropsTab::Security));
+    h.run_steps(2);
+    assert_eq!(h.state().dialog, None, "closed when neither is allowed");
+    // Sign: digital signing or certifying; Signature: the signature or the initials.
+    // (Set before the profile, which puts down what it refuses at once.)
+    for (hidden, dialog) in [("sign.digital", Dialog::Sign), ("sign.fill.signature", Dialog::Signature)] {
+        let mut h = harness(UiProfile::default());
+        h.state_mut().dialog = Some(dialog);
+        h.state_mut().set_profile(hiding(&[hidden]));
+        assert_eq!(h.state().dialog, Some(dialog), "{dialog:?} closed with only {hidden} hidden");
+        let all: &[&str] = if dialog == Dialog::Sign {
+            &["sign.digital", "sign.certify"]
+        } else {
+            &["sign.fill.signature", "sign.fill.initials", "sign.fill.signature.change", "sign.fill.initials.change"]
+        };
+        h.state_mut().set_profile(hiding(all));
+        assert_eq!(h.state().dialog, None, "{dialog:?} closes when none of its commands is allowed");
+    }
+}
+
+#[test]
+fn a_refused_dialog_request_leaves_the_open_dialog_alone() {
+    let mut h = harness(hiding(&["page.split"]));
+    h.state_mut().set_option("dialog", "about").unwrap();
+    assert!(h.state_mut().set_option("dialog", "split").is_err());
+    assert_eq!(h.state().dialog, Some(Dialog::About), "the refusal changed nothing");
+    // Certifying is its own command.
+    let mut h = harness(hiding(&["sign.certify"]));
+    assert!(h.state_mut().set_option("dialog", "certify").is_err());
+    assert_eq!(h.state().dialog, None);
+}
+
+#[test]
+fn a_workspace_whose_tools_the_profile_hides_is_left() {
+    let mut h = harness(UiProfile::default());
+    h.state_mut().set_option("mode", "edit").unwrap();
+    h.run_steps(2);
+    assert_eq!(h.state().mode, Mode::Edit, "the default profile keeps it");
+    h.state_mut().set_profile(hiding(&["group:edit"]));
+    assert_eq!(h.state().mode, Mode::AllTools, "a profile change leaves it");
+    assert!(h.state_mut().set_option("mode", "edit").is_err(), "and it can't be chosen again");
+    assert_eq!(h.state().mode, Mode::AllTools);
+    let mut h = harness(UiProfile { comments_only: true, ..UiProfile::default() });
+    assert!(h.state_mut().set_option("mode", "edit").is_err());
+    assert!(h.state_mut().set_option("mode", "sign").is_ok(), "Fill & Sign marks are comments");
+}
+
+#[test]
+fn recent_files_on_home_need_file_open() {
+    let recent = |profile: UiProfile| {
+        let mut h = harness_with(profile, false);
+        h.state_mut().set_option("home", "").unwrap();
+        h.run_steps(3);
+        shown(&h, "Recent")
+    };
+    assert!(recent(UiProfile::default()));
+    assert!(!recent(hiding(&["file.open"])));
+}
+
+#[test]
+fn the_theme_button_cycles_to_the_next_allowed_theme() {
+    let mut h = harness(hiding(&["view.theme.dark"]));
+    h.state_mut().set_option("theme", "light").unwrap();
+    h.run_steps(2);
+    // Dark is refused, System and Light aren't: the button shows and skips Dark.
+    h.get_by_label("Display theme: Light gray").click();
+    h.run_steps(2);
+    assert_eq!(h.state().theme_preference, pdfcraft_ui_egui::theme::ThemePreference::System);
+}
