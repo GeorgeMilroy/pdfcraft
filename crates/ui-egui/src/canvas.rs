@@ -2509,12 +2509,9 @@ pub fn shortcuts(view: &mut DocView, ctx: &egui::Context, speed: crate::scroll_s
         view.fit = Fit::Width;
         view.goto = Some((view.current, 0.0));
     }
-    if pressed(cmd(Key::OpenBracket)) {
-        view.view_history(false);
-    }
-    if pressed(cmd(Key::CloseBracket)) {
-        view.view_history(true);
-    }
+    // ⌘[ / ⌘] run as registered commands; one that reaches here has no view to go to or is
+    // refused by the profile, and is only consumed.
+    let _ = pressed(cmd(Key::OpenBracket)) || pressed(cmd(Key::CloseBracket));
     let key = |k| (arrows || !matches!(k, Key::ArrowLeft | Key::ArrowRight | Key::ArrowUp | Key::ArrowDown)) && ctx.input(|i| i.key_pressed(k));
     // An open menu takes Escape first and closes; the selection stays for the next one (#3535).
     if key(Key::Escape) && !egui::Popup::is_any_open(ctx) {
@@ -2650,7 +2647,8 @@ pub fn document_area(app: &mut PdfCraftApp, index: usize, ui: &mut egui::Ui) {
         app.views[index].print_pages.clear();
     }
     // The Prepare a form panel is open (or a field tool is picked): fields are edited, not filled.
-    let preparing = app.is_preparing();
+    // Not when the profile has no form design.
+    let preparing = app.is_preparing() && app.profile.allows_feature(crate::features::Feature::FormDesign);
     // Prepare a form ▸ Calculation order: the order's steps and links on the page.
     let calc_order = preparing && app.left_open && app.left == crate::LeftPanel::CalculationOrder;
     // Edit a PDF: added text and images can be selected, moved and edited.
@@ -2661,7 +2659,7 @@ pub fn document_area(app: &mut PdfCraftApp, index: usize, ui: &mut egui::Ui) {
     // Opened without the owner password and something is restricted.
     let secured = doc.security_summary().is_some_and(|s| !(s.owner || (s.permissions.modify() && s.permissions.assemble())));
     let repaired = !doc.repair_log().is_empty();
-    match notices(view, doc, secured, repaired, crate::sign_ui::banner(&doc.signatures), ui, &t) {
+    match notices(view, doc, secured, repaired, crate::sign_ui::banner(&doc.signatures), &app.profile, ui, &t) {
         #[cfg(not(target_arch = "wasm32"))]
         Some(Notice::Reload) => app.watch.reload_request = Some(view.id),
         #[cfg(target_arch = "wasm32")]
@@ -2688,7 +2686,7 @@ pub fn document_area(app: &mut PdfCraftApp, index: usize, ui: &mut egui::Ui) {
     if view.organize {
         // One remembered grid size for every document, kept in the settings.
         view.set_grid_zoom(organize_zoom);
-        organize_grid(view, info, doc.allows_assembly(), doc.dirty, unobstructed, ui, &t);
+        organize_grid(view, info, doc.allows_assembly(), doc.dirty, unobstructed, &app.profile, ui, &t);
         app.organize_zoom = view.grid_zoom();
         return;
     }
@@ -3035,6 +3033,15 @@ pub fn document_area(app: &mut PdfCraftApp, index: usize, ui: &mut egui::Ui) {
     let form = doc.form.clone();
     let generation = doc.edit_generation();
     let can_fill = doc.allows_form_filling();
+    // What the profile offers here; what it refuses is not drawn, and does nothing.
+    let offers = |id: &str| app.profile.allows_id(id);
+    let (copy_on, column_on, link_on, remove_links_on) =
+        (offers("edit.copy"), offers("edit.column_select"), offers("edit.link"), offers("edit.remove_links"));
+    let fields_on = crate::forms_ui::FieldOffers {
+        fill: app.profile.allows_feature(crate::features::Feature::FormFill),
+        sign: app.profile.allows_feature(crate::features::Feature::DigitalSignatures),
+    };
+    let field_props_on = offers("form.field.properties");
     let can_crop = doc.allows_assembly();
     let mut open_boxes = false;
     let signature = app.signature.clone();
@@ -3373,6 +3380,7 @@ pub fn document_area(app: &mut PdfCraftApp, index: usize, ui: &mut egui::Ui) {
             // Over a mark already placed, the Fill & Sign tool picks it up (comments, below).
             if let QuickTool::Fill(ft) = tool
                 && allowed
+                && app.profile.allows_id(ft.command())
                 && !comments::fill_grabs(ui, &pcx, view)
             {
                 match crate::fill_sign::page_input(
@@ -3433,7 +3441,7 @@ pub fn document_area(app: &mut PdfCraftApp, index: usize, ui: &mut egui::Ui) {
                     && !(editing_content && can_modify && crate::content_ui::select_grabs(ui, &xf, i, info, &added, view))
                     && !comments::select_grabs(ui, &pcx, view)
                 {
-                    crate::forms_ui::page_input(ui, &resp, &xf, i, info, &form, can_fill, view)
+                    crate::forms_ui::page_input(ui, &resp, &xf, i, info, &form, can_fill, fields_on, view)
                 } else {
                     FieldPointer::Away
                 };
@@ -3525,10 +3533,11 @@ pub fn document_area(app: &mut PdfCraftApp, index: usize, ui: &mut egui::Ui) {
                 );
                 !others_own_pointer && (text_used || image_used)
             };
-            let on_link = tool == QuickTool::Link && can_modify && crate::link_ui::page_input(ui, &resp, &xf, i, info, &doc_links, view);
+            let on_link = tool == QuickTool::Link && can_modify && link_on && crate::link_ui::page_input(ui, &resp, &xf, i, info, &doc_links, view);
             if tool == QuickTool::Select
                 && resp.secondary_clicked()
                 && can_modify
+                && link_on
                 && let Some(p) = pointer.filter(|p| xf.rect.contains(*p))
                 && let Some(l) = doc.links().iter().find(|l| l.page == i && crate::link_ui::screen_rect(&xf, info, i, l.rect).expand(2.0).contains(p))
             {
@@ -3581,7 +3590,7 @@ pub fn document_area(app: &mut PdfCraftApp, index: usize, ui: &mut egui::Ui) {
                     let over_link = info.links.iter().any(|l| l.page == i && xf.user_rect(info, i, l.rect).contains(p));
                     // Column select (#740): the Column select tool, or Alt (Option on macOS) held
                     // while a drag starts, as in Acrobat.
-                    let column = tool == QuickTool::ColumnSelect || ui.input(|inp| inp.modifiers.alt);
+                    let column = tool == QuickTool::ColumnSelect || column_on && ui.input(|inp| inp.modifiers.alt);
                     // A link or a form field under the pointer keeps its own cursor: a check box
                     // drawn with a glyph, or set on printed text, shows the hand, not the I-beam.
                     // So do the mode bar and side panels over a page scrolled under them (#2755),
@@ -3713,7 +3722,7 @@ pub fn document_area(app: &mut PdfCraftApp, index: usize, ui: &mut egui::Ui) {
                 }
             }
 
-            if tool == QuickTool::Select && !consumed {
+            if tool == QuickTool::Select && !consumed && copy_on {
                 crate::image_pick::page_input(&resp, &xf, i, info, doc, pointer, view);
             }
             crate::image_pick::drop_stale(doc, view);
@@ -3958,7 +3967,7 @@ pub fn document_area(app: &mut PdfCraftApp, index: usize, ui: &mut egui::Ui) {
                     });
                     ui.separator();
                 }
-                if ui.button(tl!("Properties…")).clicked() {
+                if field_props_on && ui.button(tl!("Properties…")).clicked() {
                     field_menu = Some(FieldMenu::Properties);
                     ui.close();
                 }
@@ -3974,7 +3983,7 @@ pub fn document_area(app: &mut PdfCraftApp, index: usize, ui: &mut egui::Ui) {
                 }
                 return;
             }
-            if let Some((page, index)) = view.links.context {
+            if let Some((page, index)) = view.links.context.filter(|_| link_on) {
                 if ui.button(tl!("Properties…")).clicked() {
                     view.links.open_existing = Some((page, index));
                     ui.close();
@@ -3986,7 +3995,7 @@ pub fn document_area(app: &mut PdfCraftApp, index: usize, ui: &mut egui::Ui) {
                     ui.close();
                 }
                 ui.separator();
-                if ui.add_enabled(can_modify, egui::Button::new(tl!("Remove all links"))).clicked() {
+                if remove_links_on && ui.add_enabled(can_modify, egui::Button::new(tl!("Remove all links"))).clicked() {
                     view.pending_edit = Some(Edit::RemoveLinks { pages: None });
                     view.links.selected = None;
                     view.links.context = None;
@@ -3994,7 +4003,7 @@ pub fn document_area(app: &mut PdfCraftApp, index: usize, ui: &mut egui::Ui) {
                 }
                 return;
             }
-            if view.comments.selected.is_none() {
+            if view.comments.selected.is_none() && copy_on {
                 let selected = view.selected_text().is_some_and(|t| !t.is_empty());
                 let key = crate::commands::shortcut_label(ui.ctx(), crate::commands::COPY);
                 if ui.add_enabled(can_copy && selected, egui::Button::new(tl!("Copy")).shortcut_text(key)).clicked() {
@@ -4006,6 +4015,7 @@ pub fn document_area(app: &mut PdfCraftApp, index: usize, ui: &mut egui::Ui) {
             // Over a picture (and no comment): Copy Image, as in Acrobat's page menu.
             let mut copy_image = None;
             if view.comments.selected.is_none()
+                && copy_on
                 && let Some((page, at)) = view.comments.context_at
             {
                 // The page's content is parsed once per right-click, not on every frame the menu is open.
@@ -4046,7 +4056,7 @@ pub fn document_area(app: &mut PdfCraftApp, index: usize, ui: &mut egui::Ui) {
     view.viewport_screen = out.inner_rect;
     view.auto_scroll.paint(ui, avail);
     if unobstructed && matches!(tool, QuickTool::Select | QuickTool::ColumnSelect) {
-        copy_selected |= selection_actions(ui, avail, view, info, prefs, allowed && !comments_hidden, can_copy);
+        copy_selected |= selection_actions(ui, avail, view, info, prefs, allowed && !comments_hidden, can_copy, &|id| app.profile.allows_id(id));
     }
 
     // Collect all main-page demand, including cached surfaces, for byte admission later.
@@ -4192,6 +4202,10 @@ pub fn document_area(app: &mut PdfCraftApp, index: usize, ui: &mut egui::Ui) {
             });
         });
     }
+    // A profile without Find closes the find bar (the Search panel is gated as a panel).
+    if view.find.as_ref().is_some_and(|f| !f.in_panel) && !app.profile.allows_id("edit.find") {
+        view.find = None;
+    }
     find_bar(view, info.pages.len(), avail, ui, &t);
     page_size_hint(view, info, units, avail, unobstructed, ui, &t);
     if tool == QuickTool::EnhanceCamera {
@@ -4202,6 +4216,9 @@ pub fn document_area(app: &mut PdfCraftApp, index: usize, ui: &mut egui::Ui) {
     }
     if let Some(e) = crate::edit_text_ui::overlay(ui.ctx(), view, info) {
         view.pending_edit = Some(e);
+    }
+    if !fields_on.fill {
+        view.forms.focus = None;
     }
     if let Some(e) = crate::forms_ui::overlay(ui.ctx(), view, info, &form, today) {
         view.pending_edit = Some(e);
@@ -4227,7 +4244,7 @@ pub fn document_area(app: &mut PdfCraftApp, index: usize, ui: &mut egui::Ui) {
     if editing_content {
         crate::content_ui::keys(ui.ctx(), view);
     }
-    if tool == QuickTool::Link {
+    if tool == QuickTool::Link && link_on {
         crate::link_ui::keys(ui.ctx(), view);
     } else {
         view.links.selected = None;
@@ -4281,8 +4298,12 @@ pub fn document_area(app: &mut PdfCraftApp, index: usize, ui: &mut egui::Ui) {
     }
     match clicked_link {
         Some(LinkTarget::Page(p, dest)) => view.go_to_dest(p, dest, info),
-        Some(LinkTarget::Uri(u)) => app.request_document_url(&u, crate::LinkOrigin::Link),
+        Some(LinkTarget::Uri(u)) => follow_url(app, &u, crate::LinkOrigin::Link),
         Some(LinkTarget::SetLayers { changes, preserve_rb }) => set_layers(app, index, &changes, preserve_rb),
+        // Another file opens in a tab of its own: not without tabs and File ▸ Open.
+        Some(LinkTarget::RemoteGoTo { .. }) if !app.profile.allows_feature(crate::features::Feature::App) || !app.profile.allows_id("file.open") => {
+            app.notify(tl!("Not allowed"));
+        }
         Some(LinkTarget::RemoteGoTo { file, destination, .. }) => remote_open = Some((view.id, file, destination)),
         Some(LinkTarget::Other(s)) => app.notify_fmt("This PDF uses the unsupported {s} action.", &[("s", &s)]),
         None => {}
@@ -4326,7 +4347,7 @@ pub fn document_area(app: &mut PdfCraftApp, index: usize, ui: &mut egui::Ui) {
         let doc = app.views[index].id;
         app.comment_attachment_action(doc, p, i, open);
     }
-    if let Some((name, w)) = field_props {
+    if let Some((name, w)) = field_props.filter(|_| field_props_on) {
         app.open_field_props(&name, w);
     }
     if let Some(FieldMenu::Duplicate(name)) = field_menu {
@@ -4375,7 +4396,7 @@ pub fn document_area(app: &mut PdfCraftApp, index: usize, ui: &mut egui::Ui) {
     if let Some(why) = refused {
         app.notify_error(why);
     }
-    if open_signature || open_initials {
+    if open_signature && app.profile.allows_id("sign.fill.signature") || open_initials && app.profile.allows_id("sign.fill.initials") {
         app.signature_draft = crate::fill_sign::SigDraft::new(open_initials, &app.comment_prefs.author);
         app.dialog = Some(crate::Dialog::Signature);
     }
@@ -4405,9 +4426,9 @@ pub fn document_area(app: &mut PdfCraftApp, index: usize, ui: &mut egui::Ui) {
     if copy_selected {
         app.execute("edit.copy");
     }
-    // Read mode hides the tools (#2646), and full screen is the page and nothing else (#1459);
-    // the quick tools come back with the window.
-    if app.mode != crate::Mode::Read && !app.full_screen {
+    // Read mode hides the tools (#2646), full screen is the page and nothing else (#1459), and
+    // the profile can hide them too; the quick tools come back with the window.
+    if app.mode != crate::Mode::Read && !app.full_screen && app.profile.shows_part(crate::profile::parts::QUICK_BAR) {
         quick_bar(app, avail, ui);
     }
     if let Some((source, file, destination)) = remote_open {
@@ -4423,7 +4444,21 @@ enum SelectionAction {
     Copy,
 }
 
-/// Actions on an existing text selection, next to the selected words.
+impl SelectionAction {
+    /// The command whose availability in the profile shows the action.
+    fn command(self) -> &'static str {
+        match self {
+            Self::Note => "comment.note",
+            Self::Markup(tool) => tool.command(),
+            Self::Replace => "comment.replace",
+            Self::Copy => "edit.copy",
+        }
+    }
+}
+
+/// Actions on an existing text selection, next to the selected words. Only those `offers`
+/// allows (by command id) show.
+#[allow(clippy::too_many_arguments)]
 fn selection_actions(
     ui: &mut egui::Ui,
     viewport: Rect,
@@ -4432,6 +4467,7 @@ fn selection_actions(
     prefs: &comments::CommentPrefs,
     can_comment: bool,
     can_copy: bool,
+    offers: &dyn Fn(&str) -> bool,
 ) -> bool {
     if ui.input(|input| input.pointer.is_decidedly_dragging()) {
         return false;
@@ -4451,7 +4487,18 @@ fn selection_actions(
         return false;
     }
     let rect = xf.view_rect(last);
-    if !viewport.intersects(rect) {
+    let actions: Vec<(&str, SelectionAction)> = [
+        (tl!("Add comment"), SelectionAction::Note),
+        (tl!("Highlight"), SelectionAction::Markup(comments::CommentTool::Highlight)),
+        (tl!("Underline"), SelectionAction::Markup(comments::CommentTool::Underline)),
+        (tl!("Strikethrough"), SelectionAction::Markup(comments::CommentTool::StrikeOut)),
+        (tl!("Replace text"), SelectionAction::Replace),
+        (tl!("Copy"), SelectionAction::Copy),
+    ]
+    .into_iter()
+    .filter(|(_, action)| offers(action.command()))
+    .collect();
+    if actions.is_empty() || !viewport.intersects(rect) {
         return false;
     }
     let x = rect.left().clamp(viewport.left() + 8.0, (viewport.right() - 520.0).max(viewport.left() + 8.0));
@@ -4460,19 +4507,11 @@ fn selection_actions(
     egui::Area::new(egui::Id::new(("text-selection-actions", view.id.0))).order(egui::Order::Foreground).fixed_pos(pos2(x, y)).show(ui.ctx(), |ui| {
         egui::Frame::popup(ui.style()).show(ui, |ui| {
             ui.horizontal(|ui| {
-                for (label, action) in [
-                    (tl!("Add comment"), SelectionAction::Note),
-                    (tl!("Highlight"), SelectionAction::Markup(comments::CommentTool::Highlight)),
-                    (tl!("Underline"), SelectionAction::Markup(comments::CommentTool::Underline)),
-                    (tl!("Strikethrough"), SelectionAction::Markup(comments::CommentTool::StrikeOut)),
-                    (tl!("Replace text"), SelectionAction::Replace),
-                ] {
-                    if ui.add_enabled(can_comment, egui::Button::new(label)).clicked() {
+                for (label, action) in actions {
+                    let enabled = if matches!(action, SelectionAction::Copy) { can_copy } else { can_comment };
+                    if ui.add_enabled(enabled, egui::Button::new(label)).clicked() {
                         chosen = Some(action);
                     }
-                }
-                if ui.add_enabled(can_copy, egui::Button::new(tl!("Copy"))).clicked() {
-                    chosen = Some(SelectionAction::Copy);
                 }
             });
         });
@@ -4517,10 +4556,32 @@ fn selection_actions(
     false
 }
 
+/// Open a web address from a link or a button, unless the profile turns such links off.
+fn follow_url(app: &mut PdfCraftApp, url: &str, origin: crate::LinkOrigin) {
+    if app.profile.external_links == Some(false) {
+        app.notify(tl!("Not allowed"));
+        return;
+    }
+    app.request_document_url(url, origin);
+}
+
 /// Run a push button's action (the ones that need no JavaScript engine).
 fn run_button(app: &mut PdfCraftApp, index: usize, name: &str, action: pdfcraft_engine::form_scripts::ButtonAction) {
+    use crate::features::Feature;
     use pdfcraft_engine::form_scripts::ButtonAction as B;
     let pages = app.session.get(app.views[index].id).map_or(0, |d| d.info.pages.len());
+    // What the profile refuses does nothing: resetting fields and importing an icon fill the
+    // form, Print prints and a script runs JavaScript.
+    let refused = match &action {
+        B::Reset { .. } | B::ImportIcon => !app.profile.allows_feature(Feature::FormFill),
+        B::Named(n) if n == "Print" => !app.profile.allows_id("print.dialog"),
+        B::Script(_) => !app.profile.allows_feature(Feature::JavaScript),
+        _ => false,
+    };
+    if refused {
+        app.notify(tl!("Not allowed"));
+        return;
+    }
     match action {
         B::Reset { fields, exclude } => {
             let all: Vec<String> = app.session.get(app.views[index].id).map(|d| d.form.iter().map(|f| f.name.clone()).collect()).unwrap_or_default();
@@ -4544,7 +4605,7 @@ fn run_button(app: &mut PdfCraftApp, index: usize, name: &str, action: pdfcraft_
             "LastPage" => app.views[index].go_to_page(pages.saturating_sub(1)),
             other => app.notify_fmt("{name}: the {other} action isn't supported yet", &[("name", name), ("other", other)]),
         },
-        B::Uri(u) => app.request_document_url(&u, crate::LinkOrigin::Button),
+        B::Uri(u) => follow_url(app, &u, crate::LinkOrigin::Button),
         B::GoTo(p) => app.views[index].go_to_page(p.min(pages.saturating_sub(1))),
         B::ShowHide { fields, hide } => {
             let listed = |n: &String| fields.iter().any(|f| n == f || n.starts_with(&format!("{f}.")));
@@ -4758,16 +4819,19 @@ enum Notice {
 
 /// The notice bar above the pages: a file changed on disk first, then what a historical
 /// snapshot is, then the signature status bar, a form's scripts having been turned
-/// off, security, forms and warnings.
+/// off, security, forms and warnings. A button for what `profile` refuses is not drawn.
+#[allow(clippy::too_many_arguments)]
 fn notices(
     view: &mut DocView,
     doc: &pdfcraft_engine::Document,
     secured: bool,
     repaired: bool,
     signed: Option<(&str, Color32, &str, String)>,
+    profile: &crate::profile::UiProfile,
     ui: &mut egui::Ui,
     t: &Tokens,
 ) -> Option<Notice> {
+    use crate::features::Feature;
     let info = &doc.info;
     let xfa = doc.xfa.as_ref();
     // The file changed on disk while this document has unsaved changes (#431): ask before
@@ -4787,7 +4851,7 @@ fn notices(
                     if icons::button(ui, "x", 22.0, false, tl!("Dismiss")).clicked() {
                         view.disk_changed = false;
                     }
-                    reload = crate::widgets::pill_button(ui, tl!("Reload"), false).clicked();
+                    reload = profile.allows_save() && crate::widgets::pill_button(ui, tl!("Reload"), false).clicked();
                 });
             });
         });
@@ -4820,7 +4884,7 @@ fn notices(
     if let Some((icon, color, template, arg)) = signed {
         let mut open = false;
         notice_bar(ui, t, icon, color, crate::i18n::fmt(tl!(template), &[("by", &arg)]), |ui| {
-            if crate::widgets::pill_button(ui, tl!("Signature panel"), false).clicked() {
+            if profile.shows_panel(RightPanel::Signatures) && crate::widgets::pill_button(ui, tl!("Signature panel"), false).clicked() {
                 open = true;
             }
         });
@@ -4903,16 +4967,22 @@ fn notices(
                 toggled = Some(Notice::FieldHighlights(view.highlight_fields));
             }
         }
-        if scripts_off && crate::widgets::pill_button(ui, tl!("JavaScript Console"), false).clicked() {
+        if scripts_off && profile.allows_id("tools.js_console") && crate::widgets::pill_button(ui, tl!("JavaScript Console"), false).clicked() {
             open_console = true;
         }
-        if secured && crate::widgets::pill_button(ui, tl!("Security settings"), false).clicked() {
+        if secured && profile.allows_id("file.properties") && crate::widgets::pill_button(ui, tl!("Security settings"), false).clicked() {
             open_security = true;
         }
-        if secured && doc.can_unlock() && crate::widgets::pill_button(ui, tl!("Unlock…"), true).clicked() {
+        if secured && doc.can_unlock() && profile.allows_feature(Feature::Security) && crate::widgets::pill_button(ui, tl!("Unlock…"), true).clicked()
+        {
             unlock = true;
         }
-        if repaired && !secured && info.fields.is_empty() && crate::widgets::pill_button(ui, tl!("Details"), false).clicked() {
+        if repaired
+            && !secured
+            && info.fields.is_empty()
+            && profile.allows_id("file.properties")
+            && crate::widgets::pill_button(ui, tl!("Details"), false).clicked()
+        {
             open_repairs = true;
         }
     });
@@ -5042,8 +5112,8 @@ fn quick_bar(app: &mut PdfCraftApp, area: Rect, ui: &mut egui::Ui) {
                             });
                     }
                     // Edit text & images, while the Edit workspace is open (Acrobat's Edit toolbar)
-                    // or the tool is in use.
-                    if app.mode == crate::Mode::Edit || app.quick_tool == QuickTool::EditText {
+                    // or the tool is in use, unless the profile hides it.
+                    if (app.mode == crate::Mode::Edit || app.quick_tool == QuickTool::EditText) && app.profile.allows_id("edit.edit_text") {
                         let on = app.quick_tool == QuickTool::EditText;
                         if icons::button(ui, "text-cursor-input", 32.0, on, tl!("Edit text & images")).clicked() {
                             if on {
@@ -5058,9 +5128,11 @@ fn quick_bar(app: &mut PdfCraftApp, area: Rect, ui: &mut egui::Ui) {
                         QuickTool::Fill(f) => Some(f),
                         _ => None,
                     };
-                    let shown = current_fill.unwrap_or(crate::fill_sign::FillTool::Text);
-                    // Fill & Sign ▸ unless the profile hides it.
-                    if app.profile.allows_id(shown.command()) {
+                    // The tool in use, or the first one the profile allows; none hides Fill & Sign.
+                    let shown = current_fill
+                        .filter(|f| app.profile.allows_id(f.command()))
+                        .or_else(|| crate::fill_sign::FILL_TOOLS.into_iter().find(|f| app.profile.allows_id(f.command())));
+                    if let Some(shown) = shown {
                         let resp = icons::button(
                             ui,
                             if current_fill.is_some() { shown.icon() } else { "pen-line" },
@@ -5085,7 +5157,9 @@ fn quick_bar(app: &mut PdfCraftApp, area: Rect, ui: &mut egui::Ui) {
                             .gap(6.0)
                             .show(|ui| {
                                 for tool in crate::fill_sign::FILL_TOOLS {
-                                    if matches!(tool, crate::fill_sign::FillTool::Signature | crate::fill_sign::FillTool::Initials) {
+                                    if matches!(tool, crate::fill_sign::FillTool::Signature | crate::fill_sign::FillTool::Initials)
+                                        || !app.profile.allows_id(tool.command())
+                                    {
                                         continue;
                                     }
                                     let on = current_fill == Some(tool);
@@ -5119,6 +5193,9 @@ fn quick_bar(app: &mut PdfCraftApp, area: Rect, ui: &mut egui::Ui) {
                                         app.execute(tool.command());
                                         ui.close();
                                     }
+                                }
+                                if !app.profile.allows_id("sign.fill.signature") && !app.profile.allows_id("sign.fill.initials") {
+                                    return;
                                 }
                                 ui.separator();
                                 if let Some(command) = crate::fill_sign::signature_entries(ui, app, &t) {
@@ -5168,14 +5245,12 @@ fn quick_bar(app: &mut PdfCraftApp, area: Rect, ui: &mut egui::Ui) {
                                         .any(|a| a.page == page && a.index == annotation && a.in_reply_to.is_none() && comments::made_by(a, tool))
                             })
                         {
-                            app.apply_edit(Edit::StyleAnnotation {
-                                page,
-                                index: annotation,
-                                color: Some(color),
-                                opacity: None,
-                                width: None,
-                                endings: None,
-                            });
+                            let edit =
+                                Edit::StyleAnnotation { page, index: annotation, color: Some(color), opacity: None, width: None, endings: None };
+                            // The selected comment restyles only where the profile allows its kind.
+                            if app.profile.allows_edit_in(&edit, &|p, i| app.annotation_feature(id, p, i)) {
+                                app.apply_edit(edit);
+                            }
                         }
                     }
                 });
@@ -5204,7 +5279,19 @@ pub(crate) fn grid_page_rect(cell: Rect, page: Vec2) -> Rect {
 }
 
 /// The organize toolbar: page operations on the selection (Acrobat's Organize Pages bar).
-fn organize_toolbar(view: &mut DocView, info: &DocInfo, editable: bool, dirty: bool, unobstructed: bool, ui: &mut egui::Ui, t: &Tokens) {
+/// `editable` greys out what the document doesn't allow; what `profile` refuses is not drawn.
+#[allow(clippy::too_many_arguments)]
+fn organize_toolbar(
+    view: &mut DocView,
+    info: &DocInfo,
+    editable: bool,
+    dirty: bool,
+    unobstructed: bool,
+    profile: &crate::profile::UiProfile,
+    ui: &mut egui::Ui,
+    t: &Tokens,
+) {
+    let pages_on = profile.allows_feature(crate::features::Feature::Pages);
     let targets = view.target_pages();
     let n = info.pages.len();
     let (first, last) = (targets.first().copied().unwrap_or(0), targets.last().copied().unwrap_or(0));
@@ -5219,6 +5306,9 @@ fn organize_toolbar(view: &mut DocView, info: &DocInfo, editable: bool, dirty: b
             // Fixed width so the buttons never shift as the selection text changes.
             ui.add_sized([150.0, 30.0], egui::Label::new(egui::RichText::new(label).font(theme::medium(13.0)).color(t.text_muted)).truncate());
             ui.add_enabled_ui(editable, |ui| {
+                if !pages_on {
+                    return;
+                }
                 ui.add_space(8.0);
                 if ui.add_enabled_ui(first > 0, |ui| icons::button(ui, "chevron-left", 30.0, false, tl!("Move earlier"))).inner.clicked() {
                     view.pending_edit = Some(Edit::MovePages { pages: targets.clone(), to: first - 1 });
@@ -5232,11 +5322,13 @@ fn organize_toolbar(view: &mut DocView, info: &DocInfo, editable: bool, dirty: b
                     view.organize = false;
                 }
                 // What the grid shows is what is saved.
-                let save = ui.add_enabled_ui(dirty, |ui| widgets::pill_button(ui, tl!("Save pages"), true)).inner;
-                if save.on_hover_text(tl!("Save these pages as one PDF")).on_disabled_hover_text(tl!("No changes to save")).clicked() {
-                    view.pending_action = Some(ViewAction::Save);
+                if profile.allows_save() {
+                    let save = ui.add_enabled_ui(dirty, |ui| widgets::pill_button(ui, tl!("Save pages"), true)).inner;
+                    if save.on_hover_text(tl!("Save these pages as one PDF")).on_disabled_hover_text(tl!("No changes to save")).clicked() {
+                        view.pending_action = Some(ViewAction::Save);
+                    }
+                    ui.add_space(8.0);
                 }
-                ui.add_space(8.0);
                 // Page size in the grid (right to left: in, the percentage, out).
                 let zoom = view.grid_zoom;
                 if ui
@@ -5265,7 +5357,7 @@ fn organize_toolbar(view: &mut DocView, info: &DocInfo, editable: bool, dirty: b
     });
     // Keys act on the selection unless a text field or a dialog has them (Delete under
     // Preferences deleted the selected pages).
-    if editable && unobstructed && !ui.ctx().egui_wants_keyboard_input() {
+    if editable && pages_on && unobstructed && !ui.ctx().egui_wants_keyboard_input() {
         use egui::{Key, Modifiers};
         let (del, esc) = ui.input_mut(|i| {
             (
@@ -5278,13 +5370,13 @@ fn organize_toolbar(view: &mut DocView, info: &DocInfo, editable: bool, dirty: b
             let any = |f: &dyn Fn(&egui::Event) -> bool| i.events.iter().any(f);
             (any(&|e| matches!(e, egui::Event::Copy)), any(&|e| matches!(e, egui::Event::Cut)), any(&|e| matches!(e, egui::Event::Paste(_))))
         });
-        if copy || cut {
+        if copy && profile.allows_id("page.copy") || cut && profile.allows_id("page.cut") {
             view.pending_action = Some(ViewAction::CopyPages { cut });
         }
-        if paste {
+        if paste && profile.allows_id("page.paste") {
             view.pending_action = Some(ViewAction::PastePages);
         }
-        if del && targets.len() < n {
+        if del && targets.len() < n && profile.allows_id("page.delete") {
             view.pending_edit = Some(Edit::DeletePages { pages: targets });
         }
         if esc {
@@ -5325,14 +5417,28 @@ fn gap_button(ui: &mut egui::Ui, gap: usize, at: Pos2, height: f32, label: Strin
     resp.on_hover_text(label).clicked()
 }
 
-fn organize_grid(view: &mut DocView, info: &DocInfo, editable: bool, dirty: bool, unobstructed: bool, ui: &mut egui::Ui, t: &Tokens) {
+#[allow(clippy::too_many_arguments)]
+fn organize_grid(
+    view: &mut DocView,
+    info: &DocInfo,
+    editable: bool,
+    dirty: bool,
+    unobstructed: bool,
+    profile: &crate::profile::UiProfile,
+    ui: &mut egui::Ui,
+    t: &Tokens,
+) {
     let ppp = ui.ctx().pixels_per_point();
     // The page image scales with the zoom; the padding and the page number don't.
     let cell = vec2(146.0 * view.grid_zoom + 44.0, 194.0 * view.grid_zoom + 88.0);
     let anchor = view.grid_anchor.take();
     let reveal = view.grid_reveal.take();
     let mut open_page = None;
-    organize_toolbar(view, info, editable, dirty, unobstructed, ui, t);
+    organize_toolbar(view, info, editable, dirty, unobstructed, profile, ui, t);
+    // Moving, rotating, deleting and inserting pages: what the profile refuses isn't offered.
+    let offers = |id: &str| profile.allows_id(id);
+    let pages_on = profile.allows_feature(crate::features::Feature::Pages);
+    let editable = editable && pages_on;
     let viewport = ui.available_rect_before_wrap();
     view.viewport_screen = viewport;
     let auto_delta = if unobstructed {
@@ -5465,16 +5571,21 @@ fn organize_grid(view: &mut DocView, info: &DocInfo, editable: bool, dirty: bool
                         |ui| {
                             ui.spacing_mut().item_spacing.x = 3.0;
                             ui.add_enabled_ui(editable, |ui| {
+                                if !pages_on {
+                                    return;
+                                }
                                 for (icon, degrees, key) in
                                     [("rotate-ccw", -90, "Rotate page {label} counterclockwise"), ("rotate-cw", 90, "Rotate page {label} clockwise")]
                                 {
                                     let label = crate::i18n::fmt(tl!(key), &[("label", &p.label)]);
-                                    if icons::button(ui, icon, 26.0, false, &label).clicked() {
+                                    if offers("page.rotate") && icons::button(ui, icon, 26.0, false, &label).clicked() {
                                         view.pending_edit = Some(Edit::RotatePages { pages: vec![i], degrees });
                                     }
                                 }
                                 let label = crate::i18n::fmt(tl!("Delete page {label}"), &[("label", &p.label)]);
-                                if ui.add_enabled_ui(info.pages.len() > 1, |ui| icons::button(ui, "trash-2", 26.0, false, &label)).inner.clicked() {
+                                if offers("page.delete")
+                                    && ui.add_enabled_ui(info.pages.len() > 1, |ui| icons::button(ui, "trash-2", 26.0, false, &label)).inner.clicked()
+                                {
                                     view.pending_edit = Some(Edit::DeletePages { pages: vec![i] });
                                 }
                             });
@@ -5495,24 +5606,27 @@ fn organize_grid(view: &mut DocView, info: &DocInfo, editable: bool, dirty: bool
                         view.selected = [i].into();
                         view.go_to_page(i);
                     }
-                    if ui.button(tl!("Extract pages")).clicked() {
+                    if offers("page.extract") && ui.button(tl!("Extract pages")).clicked() {
                         view.pending_action = Some(ViewAction::Extract);
                         ui.close();
                     }
-                    if ui.add_enabled(editable, egui::Button::new(tl!("Replace pages…"))).clicked() {
+                    if !pages_on {
+                        return;
+                    }
+                    if offers("page.replace") && ui.add_enabled(editable, egui::Button::new(tl!("Replace pages…"))).clicked() {
                         view.pending_action = Some(ViewAction::ReplacePages);
                         ui.close();
                     }
                     ui.separator();
-                    if ui.add_enabled(editable, egui::Button::new(tl!("Cut"))).clicked() {
+                    if offers("page.cut") && ui.add_enabled(editable, egui::Button::new(tl!("Cut"))).clicked() {
                         view.pending_action = Some(ViewAction::CopyPages { cut: true });
                         ui.close();
                     }
-                    if ui.button(tl!("Copy")).clicked() {
+                    if offers("page.copy") && ui.button(tl!("Copy")).clicked() {
                         view.pending_action = Some(ViewAction::CopyPages { cut: false });
                         ui.close();
                     }
-                    if ui.add_enabled(editable, egui::Button::new(tl!("Paste after"))).clicked() {
+                    if offers("page.paste") && ui.add_enabled(editable, egui::Button::new(tl!("Paste after"))).clicked() {
                         view.pending_action = Some(ViewAction::PastePages);
                         ui.close();
                     }
@@ -5520,7 +5634,7 @@ fn organize_grid(view: &mut DocView, info: &DocInfo, editable: bool, dirty: bool
             }
         }
         // Between pages (and at both ends): insert files right there.
-        if editable && !middle_gesture && view.org_drag.is_none() {
+        if editable && offers("page.insert") && !middle_gesture && view.org_drag.is_none() {
             let mid = |r: &Rect| r.top() + 16.0 + (cell.y - 88.0) / 2.0;
             for (i, c) in &cells {
                 let label = info
@@ -5594,8 +5708,8 @@ fn organize_grid(view: &mut DocView, info: &DocInfo, editable: bool, dirty: bool
     // Files dragged in from outside go to the gap under the pointer. Some platforms don't say
     // where the pointer is until the files are dropped; then the whole grid is the target.
     let pointer = ui.input(|i| i.pointer.hover_pos()).filter(|p| viewport.contains(*p));
-    view.grid_gap = pointer.filter(|_| editable && view.org_drag.is_none()).and_then(|p| drop_gap(&cells, p));
-    if editable && ui.input(|i| !i.raw.hovered_files.is_empty()) {
+    view.grid_gap = pointer.filter(|_| editable && offers("page.insert") && view.org_drag.is_none()).and_then(|p| drop_gap(&cells, p));
+    if editable && offers("page.insert") && ui.input(|i| !i.raw.hovered_files.is_empty()) {
         let painter = ui.painter().with_clip_rect(viewport);
         painter.rect_stroke(viewport.shrink(2.0), CornerRadius::same(6), Stroke::new(2.0, t.accent), egui::StrokeKind::Inside);
         if let Some(gap) = view.grid_gap {

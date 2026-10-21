@@ -146,8 +146,12 @@ pub(crate) fn keys(ctx: &egui::Context, view: &mut DocView) {
 }
 
 impl PdfCraftApp {
-    /// Open Link Properties for a new link area or an existing link.
+    /// Open Link Properties for a new link area or an existing link, unless the profile
+    /// refuses links.
     pub(crate) fn open_link_props(&mut self, page: usize, rect: Option<[f64; 4]>, index: Option<usize>) {
+        if !self.profile.allows_id("edit.link") {
+            return;
+        }
         let Some((_, id)) = self.active_ids() else { return };
         let existing = index.and_then(|i| self.session.get(id).and_then(|d| d.links().iter().find(|l| l.page == page && l.index == i).cloned()));
         let draft = match existing {
@@ -184,6 +188,9 @@ impl PdfCraftApp {
 
     /// Create links from URLs in the text of every page.
     pub fn links_from_urls(&mut self) {
+        if !self.profile.allows_id("edit.links_from_urls") {
+            return;
+        }
         let Some((_, id)) = self.active_ids() else { return };
         let found = self.session.find_urls(id);
         if found.is_empty() {
@@ -202,6 +209,9 @@ impl PdfCraftApp {
 
     /// Remove every link in the active document.
     pub fn remove_all_links(&mut self) {
+        if !self.profile.allows_id("edit.remove_links") {
+            return;
+        }
         let Some((_, id)) = self.active_ids() else { return };
         let count = self.session.get(id).map_or(0, |d| d.links().len());
         if count == 0 {

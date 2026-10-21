@@ -127,6 +127,16 @@ fn toggle_edit(f: &FormField, w: &FormWidget) -> Option<Edit> {
     Some(Edit::SetFieldValue { name: f.name.clone(), value })
 }
 
+/// What the profile lets the pointer do with fields. A field it refuses is inert: it shows its
+/// value and takes no click, as if it were printed on the page.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct FieldOffers {
+    /// Filling in fields (the formFill feature).
+    pub fill: bool,
+    /// Signing an empty signature field (the digitalSignatures feature).
+    pub sign: bool,
+}
+
 /// Where the pointer is relative to one page's form widgets.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum FieldPointer {
@@ -150,6 +160,7 @@ pub(crate) fn page_input(
     info: &DocInfo,
     form: &[FormField],
     allowed: bool,
+    offers: FieldOffers,
     view: &mut DocView,
 ) -> FieldPointer {
     let pointer = ui.input(|i| i.pointer.hover_pos());
@@ -166,6 +177,15 @@ pub(crate) fn page_input(
     // makes it the name the user interface identifies the field by.
     if let Some(tip) = f.tooltip.as_deref().filter(|t| !t.trim().is_empty()) {
         resp.clone().on_hover_text_at_pointer(tip);
+    }
+    // Push buttons stay: each of their actions is gated where it runs.
+    let offered = match f.kind {
+        FormFieldKind::PushButton => true,
+        FormFieldKind::Signature => offers.sign,
+        _ => offers.fill,
+    };
+    if !offered {
+        return FieldPointer::Away;
     }
     // Empty signature fields are signed by clicking them (Use a certificate); push buttons run
     // their action.
