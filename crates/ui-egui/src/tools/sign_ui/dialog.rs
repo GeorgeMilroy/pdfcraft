@@ -5,6 +5,10 @@ use super::{
 
 /// Draw the signing dialogs; returns `true` when the dialog should close.
 pub(crate) fn dialog(ui: &mut egui::Ui, app: &mut PdfCraftApp, t: &Tokens) -> bool {
+    // Managing digital IDs and signing are digital signatures, whatever opened the dialog.
+    if !app.profile.allows_feature(crate::features::Feature::DigitalSignatures) {
+        return true;
+    }
     let Some(step) = app.sign_draft.as_ref().map(|d| d.step) else { return true };
     match step {
         SignStep::Choose => choose(ui, app, t),

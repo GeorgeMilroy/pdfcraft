@@ -132,7 +132,12 @@ impl Drop for WakeOnExit {
 }
 
 impl PdfCraftApp {
+    /// Open the Print dialog (File ▸ Print, or a script's `print()`), when the profile allows
+    /// printing.
     pub fn open_print(&mut self) {
+        if !self.profile.allows_feature(crate::features::Feature::Print) {
+            return;
+        }
         let Some((i, _)) = self.active_ids() else { return };
         let (printers, printers_loading) = match self.printer_source.clone() {
             // The list from the last time the dialog opened, until the fresh one arrives.
@@ -388,6 +393,9 @@ impl PdfCraftApp {
     /// a preset path returns `true` once the save picker is showing; the file is written on a
     /// later frame, when the user has chosen where.
     pub fn print_now(&mut self) -> bool {
+        if !self.profile.allows_feature(crate::features::Feature::Print) {
+            return false;
+        }
         // What's typed in a form field is part of what's printed (#166).
         if !self.commit_form_typing() {
             return false;
@@ -423,6 +431,8 @@ impl PdfCraftApp {
                 }
             }
             Some(printer) => self.send_to_printer(printer, bytes, self.print_draft.job(&name)),
+            // Save as PDF writes a copy.
+            None if !self.profile.allows_feature(crate::features::Feature::Download) => false,
             None => self.save_print_pdf(&name, bytes),
         }
     }

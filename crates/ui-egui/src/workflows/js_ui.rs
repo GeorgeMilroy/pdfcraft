@@ -5,6 +5,7 @@ use egui::{Align, Layout};
 use pdfcraft_engine::js::{JsOutput, Message, MessageIcon, Panel, Request};
 use pdfcraft_engine::{DocId, Edit};
 
+use crate::features::Feature;
 use crate::theme::{self, Tokens};
 use crate::{PdfCraftApp, widgets};
 
@@ -137,8 +138,11 @@ impl PdfCraftApp {
         true
     }
 
-    /// Run a push button's JavaScript (its Mouse Up action).
+    /// Run a push button's JavaScript (its Mouse Up action), when the profile allows scripts.
     pub fn run_button_script(&mut self, id: DocId, field: &str, script: &str) {
+        if !self.profile.allows_feature(Feature::JavaScript) {
+            return;
+        }
         // A script reads the fields: include what's still being typed in one (#166).
         if !self.commit_form_typing() {
             return;
@@ -184,6 +188,9 @@ impl PdfCraftApp {
 
     /// The console's Run: evaluate the input in the active document.
     pub fn run_console(&mut self) {
+        if !self.profile.allows_feature(Feature::JavaScript) {
+            return;
+        }
         let Some((i, id)) = self.active_ids() else { return };
         let script = self.js_console.input.clone();
         if script.trim().is_empty() {
@@ -438,14 +445,22 @@ pub(crate) fn preferences_body(ui: &mut egui::Ui, app: &mut PdfCraftApp, t: &Tok
     ui.label(egui::RichText::new(tl!("Documents and view")).font(theme::semibold(13.0)));
     ui.horizontal(|ui| {
         ui.label(tl!("Default workspace mode"));
-        for (mode, label) in [
+        // Edit, Convert and E-Sign open their tool group: offered while the profile shows it.
+        let shows = |group: &str, feature| !app.profile.hides_group(group) && app.profile.allows_feature(feature);
+        let offered = [true, true, shows("edit", Feature::EditContent), shows("export", Feature::Export), shows("fill_sign", Feature::FillSign)];
+        for ((mode, label), offered) in [
             (crate::Mode::AllTools, "All tools"),
             (crate::Mode::Read, "Read"),
             (crate::Mode::Edit, "Edit"),
             (crate::Mode::Convert, "Convert"),
             (crate::Mode::Sign, "E-Sign"),
-        ] {
-            widgets::radio_value(ui, &mut app.default_mode, mode, tl!(label));
+        ]
+        .into_iter()
+        .zip(offered)
+        {
+            if offered {
+                widgets::radio_value(ui, &mut app.default_mode, mode, tl!(label));
+            }
         }
     });
     ui.label(
@@ -518,36 +533,50 @@ pub(crate) fn preferences_body(ui: &mut egui::Ui, app: &mut PdfCraftApp, t: &Tok
         ui.add(widgets::checkbox(&mut app.system_title_bar, tl!("Use system title bar")))
             .on_hover_text(tl!("Show a basic title bar for the window buttons instead of the tab strip. GNOME doesn't draw title bars for apps, so this one doesn't follow its theme."));
     }
-    ui.add_space(8.0);
-    // Identity: the author of new comments (Acrobat: Preferences ▸ Identity).
-    ui.label(egui::RichText::new(tl!("Identity")).font(theme::semibold(13.0)));
-    ui.horizontal(|ui| {
-        let label = ui.label(tl!("Name on new comments"));
-        ui.add(crate::widgets::line(&mut app.comment_prefs.author).desired_width(220.0).char_limit(crate::MAX_AUTHOR_CHARS)).labelled_by(label.id);
-    });
-    ui.add(widgets::checkbox(&mut app.comment_prefs.hide_empty_highlight_hover, tl!("Hide hover previews for highlights without comment text")));
-    ui.add_space(8.0);
-    ui.label(egui::RichText::new(tl!("Fill & Sign")).font(theme::semibold(13.0)));
-    ui.add(widgets::checkbox(&mut app.flatten_fill_sign_on_save, tl!("Flatten Fill & Sign when saving")));
-    ui.label(
-        egui::RichText::new(tl!("Text, marks and signatures become part of the page. Other comments stay editable.")).small().color(t.text_muted),
-    );
-    ui.add_space(8.0);
-    date_format(ui, app, t);
-    ui.add_space(8.0);
-    ui.label(egui::RichText::new("JavaScript").font(theme::semibold(13.0)));
-    egui::Frame::new().fill(t.hover).corner_radius(egui::CornerRadius::same(6)).inner_margin(egui::Margin::same(10)).show(ui, |ui| {
-        ui.set_width(ui.available_width());
-        let mut on = app.session.javascript();
-        if ui.add(widgets::checkbox(&mut on, tl!("Enable Acrobat JavaScript"))).changed() {
-            app.session.set_javascript(on);
+    // The sections below are for features the profile may turn off; each shows with its feature.
+    let comments = [Feature::Comments, Feature::Markup, Feature::Shapes, Feature::Ink, Feature::Stamps, Feature::Measurement];
+    if comments.into_iter().any(|f| app.profile.allows_feature(f)) {
+        ui.add_space(8.0);
+        // Identity: the author of new comments (Acrobat: Preferences ▸ Identity).
+        ui.label(egui::RichText::new(tl!("Identity")).font(theme::semibold(13.0)));
+        ui.horizontal(|ui| {
+            let label = ui.label(tl!("Name on new comments"));
+            ui.add(crate::widgets::line(&mut app.comment_prefs.author).desired_width(220.0).char_limit(crate::MAX_AUTHOR_CHARS))
+                .labelled_by(label.id);
+        });
+        if app.profile.allows_feature(Feature::Markup) {
+            ui.add(widgets::checkbox(
+                &mut app.comment_prefs.hide_empty_highlight_hover,
+                tl!("Hide hover previews for highlights without comment text"),
+            ));
         }
+    }
+    if app.profile.allows_feature(Feature::FillSign) {
+        ui.add_space(8.0);
+        ui.label(egui::RichText::new(tl!("Fill & Sign")).font(theme::semibold(13.0)));
+        ui.add(widgets::checkbox(&mut app.flatten_fill_sign_on_save, tl!("Flatten Fill & Sign when saving")));
         ui.label(
-            egui::RichText::new(tl!("Scripts run in a sandbox without file or network access. A script that asks to open a web page needs your permission first. With JavaScript off, Acrobat's standard format, validate and calculate functions still work."))
-                .small()
-                .color(t.text_muted),
+            egui::RichText::new(tl!("Text, marks and signatures become part of the page. Other comments stay editable.")).small().color(t.text_muted),
         );
-    });
+        ui.add_space(8.0);
+        date_format(ui, app, t);
+    }
+    if app.profile.allows_feature(Feature::JavaScript) {
+        ui.add_space(8.0);
+        ui.label(egui::RichText::new("JavaScript").font(theme::semibold(13.0)));
+        egui::Frame::new().fill(t.hover).corner_radius(egui::CornerRadius::same(6)).inner_margin(egui::Margin::same(10)).show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            let mut on = app.session.javascript();
+            if ui.add(widgets::checkbox(&mut on, tl!("Enable Acrobat JavaScript"))).changed() {
+                app.session.set_javascript(on);
+            }
+            ui.label(
+                egui::RichText::new(tl!("Scripts run in a sandbox without file or network access. A script that asks to open a web page needs your permission first. With JavaScript off, Acrobat's standard format, validate and calculate functions still work."))
+                    .small()
+                    .color(t.text_muted),
+            );
+        });
+    }
 }
 
 /// The Preferences dialog's OK row. Returns `true` to close.

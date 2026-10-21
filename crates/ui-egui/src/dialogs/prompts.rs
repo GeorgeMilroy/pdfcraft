@@ -43,9 +43,15 @@ impl PromptButton {
 /// the button chosen when the prompt opens, so Enter saves; the arrow keys and Tab / Shift+Tab move
 /// the choice, and Enter or Space press the chosen button. Escape cancels. Don't save also has
 /// ⌘D / Ctrl+D, the macOS convention, and Alt+D / Alt+N, the mnemonics Windows and Linux desktops
-/// use for it. Returns the answer once one is given.
+/// use for it. Without Save (the profile refuses saving) the choice starts on Cancel and moves only
+/// between Don't save and Cancel, so no key saves. Returns the answer once one is given.
 pub(crate) fn save_prompt_key(ctx: &egui::Context, chosen: &mut PromptButton) -> Option<Option<bool>> {
     use egui::{Key, Modifiers};
+    let can_save = super::frame_profile(ctx).allows_save();
+    let offered = |b: PromptButton| can_save || b != PromptButton::Save;
+    if !offered(*chosen) {
+        *chosen = PromptButton::Cancel;
+    }
     ctx.input_mut(|i| {
         if i.consume_key(Modifiers::NONE, Key::Enter) || i.consume_key(Modifiers::NONE, Key::Space) {
             return Some(chosen.answer());
@@ -57,14 +63,19 @@ pub(crate) fn save_prompt_key(ctx: &egui::Context, chosen: &mut PromptButton) ->
             return Some(Some(false));
         }
         // Shift+Tab before Tab: a key press matches a pattern that asks for fewer modifiers.
-        if i.consume_key(Modifiers::SHIFT, Key::Tab) {
-            *chosen = chosen.cycle(true);
-        } else if i.consume_key(Modifiers::NONE, Key::Tab) {
-            *chosen = chosen.cycle(false);
+        let back = i.consume_key(Modifiers::SHIFT, Key::Tab);
+        if back || i.consume_key(Modifiers::NONE, Key::Tab) {
+            *chosen = chosen.cycle(back);
+            if !offered(*chosen) {
+                *chosen = chosen.cycle(back);
+            }
         }
         for (key, by) in [(Key::ArrowLeft, -1), (Key::ArrowUp, -1), (Key::ArrowRight, 1), (Key::ArrowDown, 1)] {
             if i.consume_key(Modifiers::NONE, key) {
-                *chosen = chosen.step(by);
+                let to = chosen.step(by);
+                if offered(to) {
+                    *chosen = to;
+                }
             }
         }
         None
@@ -108,7 +119,8 @@ pub(super) fn save_prompt(app: &mut PdfCraftApp, ctx: &egui::Context) {
         ui.add_space(14.0);
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             let chosen = app.save_prompt_button;
-            if widgets::pill_button_marked(ui, tl!("Save"), true, chosen == PromptButton::Save).clicked() {
+            // A profile that refuses saving leaves Don't save and Cancel.
+            if app.profile.allows_save() && widgets::pill_button_marked(ui, tl!("Save"), true, chosen == PromptButton::Save).clicked() {
                 choice = Some(Some(true));
             }
             if widgets::pill_button_marked(ui, tl!("Cancel"), false, chosen == PromptButton::Cancel).clicked() {

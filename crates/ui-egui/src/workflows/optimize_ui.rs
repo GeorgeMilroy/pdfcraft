@@ -351,6 +351,10 @@ impl PdfCraftApp {
     /// Run an optimization of the active document on a worker thread (inline in tests and on
     /// the web), showing its progress; the copy is saved when it is done.
     pub(crate) fn start_optimize(&mut self, kind: OptimizeKind, settings: &Settings, discard: &[Hidden]) {
+        // The optimized copy is a file written beside the document.
+        if !self.profile.allows_feature(crate::features::Feature::Download) {
+            return;
+        }
         // What's typed in a form field is part of the document (#166).
         if !self.commit_form_typing() {
             return;

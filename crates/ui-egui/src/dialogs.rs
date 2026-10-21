@@ -62,6 +62,8 @@ struct Pending {
     images_now: bool,
     stamp_now: bool,
     alt_now: bool,
+    /// A Fill & Sign tool to arm through its command (so the profile has its say).
+    arm_fill: Option<&'static str>,
     close: bool,
     /// The dialog to switch to, when a widget asked for another one.
     next: Option<Dialog>,
@@ -74,9 +76,29 @@ pub fn show(app: &mut PdfCraftApp, ctx: &egui::Context) {
     if app.modal_open() || ctx.memory(|m| m.top_modal_layer().is_some()) {
         ctx.set_cursor_icon(egui::CursorIcon::Default);
     }
+    publish_profile(app, ctx);
     dialogs(app, ctx);
     // Last, so it sits above Document Properties when Security's Unlock… asked for it.
     unlock(app, ctx);
+}
+
+/// Where [`publish_profile`] keeps the profile.
+fn profile_id() -> egui::Id {
+    egui::Id::unique("ui_profile")
+}
+
+/// Hand the profile to panel bodies drawn without the app (Signatures, Accessibility, Tags),
+/// through [`frame_profile`]; republished only when it changed.
+fn publish_profile(app: &PdfCraftApp, ctx: &egui::Context) {
+    if *frame_profile(ctx) != app.profile {
+        ctx.data_mut(|d| d.insert_temp(profile_id(), std::sync::Arc::new(app.profile.clone())));
+    }
+}
+
+/// The profile as of the last time the dialogs were drawn (every frame); the default profile
+/// before the first.
+pub(crate) fn frame_profile(ctx: &egui::Context) -> std::sync::Arc<crate::profile::UiProfile> {
+    ctx.data(|d| d.get_temp(profile_id())).unwrap_or_default()
 }
 
 /// Draw the active modal dialog and apply the action the user chose.
@@ -437,12 +459,12 @@ fn dialog_body(ui: &mut egui::Ui, app: &mut PdfCraftApp, dialog: Dialog, req: &m
             }
         }
         Dialog::Shortcuts => {
-            if !dialog_shortcuts(ui) {
+            if !dialog_shortcuts(ui, &app.profile) {
                 return false;
             }
         }
         Dialog::About => {
-            if !dialog_about(ui, req) {
+            if !dialog_about(ui, &app.profile, req) {
                 return false;
             }
         }
@@ -472,11 +494,15 @@ fn dialog_properties(ui: &mut egui::Ui, app: &mut PdfCraftApp, req: &mut Pending
     });
     ui.separator();
     let units = app.units;
+    // Without content editing the fields only show; opening a revision opens a tab.
+    let edit_content = app.profile.allows_feature(crate::features::Feature::EditContent);
+    let open_files = app.profile.allows_feature(crate::features::Feature::App);
+    let allows = |id: &str| app.profile.allows_id(id);
     let Some((_, id)) = app.active_ids() else { return false };
     let Some(doc) = app.session.get(id) else { return false };
     let i = &doc.info;
     // Description shows plain values among text fields; they start where the fields' text does.
-    let editable_info = tab == PropsTab::Description && doc.allows_modification() && app.props_draft.is_some();
+    let editable_info = tab == PropsTab::Description && doc.allows_modification() && edit_content && app.props_draft.is_some();
     let inset = if editable_info { widgets::FIELD_TEXT_INSET } else { 0.0 };
     let row = |ui: &mut egui::Ui, k: &str, v: String| {
         // Row labels are UI chrome; values are document data and stay as they are.
@@ -535,7 +561,7 @@ fn dialog_properties(ui: &mut egui::Ui, app: &mut PdfCraftApp, req: &mut Pending
             }
             PropsTab::InitialView => {
                 use pdfcraft_engine::{InitialLayout as L, Magnification as M, Navigation as N};
-                let editable = doc.allows_modification();
+                let editable = doc.allows_modification() && edit_content;
                 let pages = i.pages.len();
                 let Some((_, v)) = app.view_draft.as_mut() else { return };
                 ui.label(egui::RichText::new(tl!("Layout and Magnification")).font(theme::semibold(12.5)));
@@ -656,7 +682,7 @@ fn dialog_properties(ui: &mut egui::Ui, app: &mut PdfCraftApp, req: &mut Pending
                 None => {
                     row(ui, "Security method", tl!("No security").to_string());
                     row(ui, "Restrictions", tl!("None — everything is allowed").to_string());
-                    if doc.allows_security_change() && ui.button(tl!("Protect using password…")).clicked() {
+                    if doc.allows_security_change() && allows("protect.password") && ui.button(tl!("Protect using password…")).clicked() {
                         req.link_command = Some("protect.password");
                     }
                 }
@@ -677,13 +703,13 @@ fn dialog_properties(ui: &mut egui::Ui, app: &mut PdfCraftApp, req: &mut Pending
                     // A restricted document asks for its permissions password first.
                     if doc.allows_security_change() || doc.can_unlock() {
                         ui.horizontal(|ui| {
-                            if doc.can_unlock() && ui.button(tl!("Unlock…")).clicked() {
+                            if doc.can_unlock() && allows("protect.unlock") && ui.button(tl!("Unlock…")).clicked() {
                                 req.link_command = Some("protect.unlock");
                             }
-                            if ui.button(tl!("Change settings…")).clicked() {
+                            if allows("protect.password") && ui.button(tl!("Change settings…")).clicked() {
                                 req.link_command = Some("protect.password");
                             }
-                            if ui.button(tl!("Remove security")).clicked() {
+                            if allows("protect.remove") && ui.button(tl!("Remove security")).clicked() {
                                 req.link_command = Some("protect.remove");
                             }
                         });
@@ -731,7 +757,7 @@ fn dialog_properties(ui: &mut egui::Ui, app: &mut PdfCraftApp, req: &mut Pending
             PropsTab::Custom => {
                 // Add takes a new name, Update changes the value of the listed property the
                 // Name field names, Delete removes it; OK writes the changes as one step.
-                let editable = doc.allows_modification();
+                let editable = doc.allows_modification() && edit_content;
                 let Some((_, d)) = app.custom_draft.as_mut() else { return };
                 let l = ui.label(egui::RichText::new(tl!("Name:")).color(t.text_muted));
                 ui.add_enabled(editable, widgets::line(&mut d.name).desired_width(420.0).background_color(t.field).id_salt("custom-name"))
@@ -820,7 +846,7 @@ fn dialog_properties(ui: &mut egui::Ui, app: &mut PdfCraftApp, req: &mut Pending
                 row(ui, "JavaScript", yes(i.has_javascript));
                 // Each incremental update is a revision; earlier ones open as their own document.
                 let ends = doc.revision_ends();
-                if ends.len() > 1 {
+                if ends.len() > 1 && open_files {
                     ui.label(egui::RichText::new(tl!("Revisions")).color(t.text_muted));
                     // Reserve the full wrapped height before the grid starts the next row.
                     ui.vertical(|ui| {
@@ -841,7 +867,7 @@ fn dialog_properties(ui: &mut egui::Ui, app: &mut PdfCraftApp, req: &mut Pending
                 }
                 // Reading Options: binding and language.
                 if let Some((_, v)) = app.view_draft.as_mut() {
-                    let editable = doc.allows_modification();
+                    let editable = doc.allows_modification() && edit_content;
                     ui.label(egui::RichText::new(tl!("Binding")).color(t.text_muted));
                     ui.add_enabled_ui(editable, |ui| {
                         ui.horizontal(|ui| {
@@ -1192,7 +1218,8 @@ fn dialog_certificate_viewer(ui: &mut egui::Ui, app: &mut PdfCraftApp, req: &mut
         req.close = true;
         return false;
     };
-    let (done, action) = crate::sign_ui::cert_viewer(ui, v, &trusted, &t);
+    let manage = app.profile.allows_feature(crate::features::Feature::DigitalSignatures);
+    let (done, action) = crate::sign_ui::cert_viewer(ui, v, &trusted, &t, manage);
     req.close = done;
     match action {
         Some(crate::sign_ui::CertAction::Trust(c)) => app.trust_certificate(*c),
@@ -1306,7 +1333,8 @@ fn dialog_print(ui: &mut egui::Ui, app: &mut PdfCraftApp, req: &mut Pending) -> 
     let view = &mut app.views[i];
     view.set_print_grayscale(app.print_draft.grayscale);
     view.queue_print_previews(&rasters);
-    let (go, cancel) = crate::print_ui::body(ui, &mut app.print_draft, &t, &sizes, &labels, &mut |p| {
+    let save_pdf = app.profile.allows_feature(crate::features::Feature::Download);
+    let (go, cancel) = crate::print_ui::body(ui, &mut app.print_draft, &t, &sizes, &labels, save_pdf, &mut |p| {
         view.need_thumbnail(p, true);
         view.page_preview(p)
     });
@@ -1333,7 +1361,8 @@ fn dialog_signature(ui: &mut egui::Ui, app: &mut PdfCraftApp, req: &mut Pending)
             app.signature = d.saved();
             crate::fill_sign::FillTool::Signature
         };
-        app.quick_tool = crate::QuickTool::Fill(tool);
+        // Armed as its command would arm it, so the profile has its say.
+        req.arm_fill = Some(tool.command());
         app.toast = None;
     }
     req.close = req.apply || cancel;
@@ -1447,16 +1476,17 @@ fn dialog_recovery(ui: &mut egui::Ui, app: &mut PdfCraftApp) -> bool {
 }
 
 /// `Dialog::Shortcuts` content. Returns `false` when it has its own buttons and no footer is wanted.
-fn dialog_shortcuts(ui: &mut egui::Ui) -> bool {
+fn dialog_shortcuts(ui: &mut egui::Ui, profile: &crate::profile::UiProfile) -> bool {
     ui.label(egui::RichText::new(tl!("Keyboard shortcuts")).font(theme::semibold(18.0)));
     ui.add_space(8.0);
     use crate::commands::{
         ACTUAL_SIZE, COPY, FIND_NEXT, FIND_PREV, FIT_WIDTH, PAGE_LEVEL, PAGE_NEXT, PAGE_PREV, ROTATE_CCW, ROTATE_CW, SELECT_ALL, ZOOM_IN, ZOOM_OUT,
     };
     // Registered commands first (always in sync with the real bindings), then the
-    // keys the document view handles itself.
+    // keys the document view handles itself; only what the profile lets run.
     let mut rows: Vec<(String, String)> = pdfcraft_engine::commands::COMMANDS
         .iter()
+        .filter(|c| profile.allows_command(c))
         .filter_map(|c| c.shortcut.map(|k| (crate::commands::shortcut_label(ui.ctx(), k), tl!(c.label).trim_end_matches('…').to_string())))
         .collect();
     let key = |s: pdfcraft_engine::commands::Shortcut| crate::commands::shortcut_label(ui.ctx(), s);
@@ -1464,24 +1494,27 @@ fn dialog_shortcuts(ui: &mut egui::Ui) -> bool {
     // Key names, translated where a catalog has them (not scanned as UI literals).
     let named = |k: &str| tl!(k).to_string();
     let scroll = crate::i18n::fmt(tl!("Zoom in / out (also pinch or {key}-scroll)"), &[("key", crate::commands::command_modifier_label(ui.ctx()))]);
-    for (k, v) in [
-        (pair(FIND_NEXT, FIND_PREV), tl!("Next / previous match").to_string()),
-        (key(COPY), tl!("Copy selected text").to_string()),
-        (named("Double-click"), tl!("Select a word").to_string()),
-        (crate::i18n::key_name("Esc").to_string(), tl!("Clear selection / close find").to_string()),
-        (key(ACTUAL_SIZE), tl!("Actual size").to_string()),
-        (key(PAGE_LEVEL), tl!("Zoom to page level").to_string()),
-        (key(FIT_WIDTH), tl!("Fit to width").to_string()),
-        (pair(ZOOM_IN, ZOOM_OUT), scroll),
-        (pair(ROTATE_CW, ROTATE_CCW), tl!("Rotate view").to_string()),
-        (format!("{} / {}", crate::i18n::key_name("Home"), crate::i18n::key_name("End")), tl!("First / last page").to_string()),
-        (format!("← / →, {}", pair(PAGE_PREV, PAGE_NEXT)), tl!("Previous / next page").to_string()),
-        (named("V"), tl!("Select (V)").to_string()),
-        (named("H / Space (hold)"), tl!("Hand (H)").to_string()),
-        (crate::i18n::key_name("Delete").to_string(), tl!("Delete selected pages (Organize)").to_string()),
-        (key(SELECT_ALL), tl!("Select all pages (Organize)").to_string()),
+    use crate::features::Feature as F;
+    for (k, v, feature) in [
+        (pair(FIND_NEXT, FIND_PREV), tl!("Next / previous match").to_string(), F::Search),
+        (key(COPY), tl!("Copy selected text").to_string(), F::Copy),
+        (named("Double-click"), tl!("Select a word").to_string(), F::Viewer),
+        (crate::i18n::key_name("Esc").to_string(), tl!("Clear selection / close find").to_string(), F::Viewer),
+        (key(ACTUAL_SIZE), tl!("Actual size").to_string(), F::Viewer),
+        (key(PAGE_LEVEL), tl!("Zoom to page level").to_string(), F::Viewer),
+        (key(FIT_WIDTH), tl!("Fit to width").to_string(), F::Viewer),
+        (pair(ZOOM_IN, ZOOM_OUT), scroll, F::Viewer),
+        (pair(ROTATE_CW, ROTATE_CCW), tl!("Rotate view").to_string(), F::Viewer),
+        (format!("{} / {}", crate::i18n::key_name("Home"), crate::i18n::key_name("End")), tl!("First / last page").to_string(), F::Viewer),
+        (format!("← / →, {}", pair(PAGE_PREV, PAGE_NEXT)), tl!("Previous / next page").to_string(), F::Viewer),
+        (named("V"), tl!("Select (V)").to_string(), F::Viewer),
+        (named("H / Space (hold)"), tl!("Hand (H)").to_string(), F::Viewer),
+        (crate::i18n::key_name("Delete").to_string(), tl!("Delete selected pages (Organize)").to_string(), F::Pages),
+        (key(SELECT_ALL), tl!("Select all pages (Organize)").to_string(), F::Pages),
     ] {
-        rows.push((k, v));
+        if profile.allows_feature(feature) {
+            rows.push((k, v));
+        }
     }
     egui::ScrollArea::vertical().max_height(460.0).show(ui, |ui| {
         egui::Grid::new("keys").num_columns(2).spacing([24.0, 6.0]).show(ui, |ui| {
@@ -1496,7 +1529,7 @@ fn dialog_shortcuts(ui: &mut egui::Ui) -> bool {
 }
 
 /// `Dialog::About` content. Returns `false` when it has its own buttons and no footer is wanted.
-fn dialog_about(ui: &mut egui::Ui, req: &mut Pending) -> bool {
+fn dialog_about(ui: &mut egui::Ui, profile: &crate::profile::UiProfile, req: &mut Pending) -> bool {
     let t = Tokens::get(ui.ctx());
     // Tabs About · Contributors · Models (craftrules standards/contributors.md).
     let tab_id = egui::Id::unique("about_tab");
@@ -1547,7 +1580,10 @@ fn dialog_about(ui: &mut egui::Ui, req: &mut Pending) -> bool {
                 });
             }
             ui.add_space(6.0);
-            if let Some(cmd) = widgets::community_links(ui) {
+            // The links are commands (help.*): shown only when the profile lets every one run.
+            if pdfcraft_engine::links::LINKS.iter().all(|l| profile.allows_id(l.command))
+                && let Some(cmd) = widgets::community_links(ui)
+            {
                 req.link_command = Some(cmd);
             }
         }
@@ -1557,7 +1593,8 @@ fn dialog_about(ui: &mut egui::Ui, req: &mut Pending) -> bool {
 
 fn dialog_footer(ui: &mut egui::Ui, app: &mut PdfCraftApp, dialog: Dialog, req: &mut Pending) {
     ui.add_space(16.0);
-    let changed = draft_changes(app).is_some_and(|c| !c.is_empty());
+    // The Properties fields only show without content editing: Close, never OK.
+    let changed = app.profile.allows_feature(crate::features::Feature::EditContent) && draft_changes(app).is_some_and(|c| !c.is_empty());
     // One row high: on its own, a right-to-left layout centres the buttons in all the height
     // left, which after a taller Properties tab is the room that tab left behind.
     ui.horizontal(|ui| {
@@ -1844,6 +1881,9 @@ fn finish_close(app: &mut PdfCraftApp, dialog: Dialog, modal_closed: bool, req: 
         app.dialog = Some(req.next.unwrap_or(dialog));
     }
     if let Some(cmd) = req.link_command {
+        app.execute(cmd);
+    }
+    if let Some(cmd) = req.arm_fill {
         app.execute(cmd);
     }
     if let Some(n) = req.open_revision {

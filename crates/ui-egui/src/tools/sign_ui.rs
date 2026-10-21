@@ -9,6 +9,7 @@ use pdfcraft_engine::sign::{self, Appearance, AppearanceLabels, Certificate, Dig
 use pdfcraft_engine::{SignOptions, SignatureImage, SignatureInfo, SignatureStatus};
 
 use crate::canvas::{DocView, PageXform, Snapshot, SnapshotKind};
+use crate::features::Feature;
 use crate::fill_sign::SavedSig;
 use crate::page_cursor::Layer;
 use crate::page_pointer::PagePointer;
@@ -287,12 +288,19 @@ fn entry_unusable(u: &sign::windows::Unusable) -> DigitalIdEntry {
 impl PdfCraftApp {
     /// Export certificate: write `c` as PEM into a chosen folder, named after its subject.
     pub(crate) fn export_certificate(&mut self, c: &Certificate) {
+        if !self.profile.allows_feature(Feature::DigitalSignatures) {
+            return;
+        }
         let name = format!("{}.cer", crate::files::attachment_file_name(&c.display_name()));
         self.write_files(&[(name, std::sync::Arc::new(certificate_pem(c).into_bytes()))], "Export certificate");
     }
 
-    /// Start signing: the rectangle (or field) is known; show Sign with a Digital ID.
+    /// Start signing: the rectangle (or field) is known; show Sign with a Digital ID. Every way
+    /// into signing comes here, so a profile without digital signatures stops it here.
     pub fn start_signing(&mut self, page: usize, rect: Option<[f64; 4]>, field: Option<String>, certify: Option<u8>) {
+        if !self.profile.allows_feature(Feature::DigitalSignatures) {
+            return;
+        }
         self.refresh_os_key_store_ids();
         let mut draft = SignDraft::new(page, rect, field, certify, &self.digital_ids);
         draft.graphic = match &self.sign_graphic {
@@ -554,6 +562,9 @@ impl PdfCraftApp {
 
     /// Trust a certificate (Signatures panel ▸ Add to trusted certificates), revalidating.
     pub fn trust_certificate(&mut self, cert: Certificate) {
+        if !self.profile.allows_feature(Feature::DigitalSignatures) {
+            return;
+        }
         let mut certs = self.session.trusted_certificates().to_vec();
         if !certs.iter().any(|c| c.raw == cert.raw) {
             certs.push(cert);
@@ -581,6 +592,10 @@ impl PdfCraftApp {
     /// Open saved revision `n` (1 = the oldest) of the active document as a new document.
     /// A repeat reuses the tab: every click used to open another identical one.
     pub fn open_revision(&mut self, n: usize) {
+        // A new document tab: an app feature.
+        if !self.profile.allows_feature(Feature::App) {
+            return;
+        }
         let Some((_, id)) = self.active_ids() else { return };
         let Some(doc) = self.session.get(id) else { return };
         // The revision's byte range, as `Session::open_revision` reads it. An unknown `n`
@@ -637,6 +652,9 @@ impl PdfCraftApp {
     /// Open the signed version of a signature as a new document (View signed version).
     /// A repeat reuses the tab: every click used to open another identical one.
     pub fn view_signed_version(&mut self, len: usize, revision: usize) {
+        if !self.profile.allows_feature(Feature::App) {
+            return;
+        }
         let Some((_, id)) = self.active_ids() else { return };
         let Some(doc) = self.session.get(id) else { return };
         let end = len.min(doc.bytes.len());

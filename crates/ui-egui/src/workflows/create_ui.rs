@@ -241,6 +241,9 @@ impl PdfCraftApp {
         kind: crate::optimize_ui::OptimizeKind,
         result: Result<(Arc<Vec<u8>>, String), pdfcraft_engine::EditError>,
     ) {
+        if !self.profile.allows_feature(crate::features::Feature::Download) {
+            return;
+        }
         let Some(doc) = self.session.get(id) else { return };
         let (before, name) = (doc.bytes.len(), format!("{} ({}).pdf", stem(&doc.name), kind.suffix()));
         #[cfg(not(target_arch = "wasm32"))]
