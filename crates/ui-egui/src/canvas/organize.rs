@@ -162,19 +162,20 @@ fn organize_toolbar(view: &mut DocView, info: &DocInfo, editable: bool, dirty: b
     });
     // Keys act on the selection unless a text field or a dialog has them (Delete under
     // Preferences deleted the selected pages).
-    if editable && pages_on && !ui.ctx().egui_wants_keyboard_input() {
+    // Escape still clears the selection without the pages feature; the page changes need it.
+    if editable && !ui.ctx().egui_wants_keyboard_input() {
         use egui::Key;
         let ctx = ui.ctx();
         let (del, esc) = (keys.take(ctx, Key::Delete) || keys.take(ctx, Key::Backspace), keys.take(ctx, Key::Escape));
         // ⌘C / ⌘X / ⌘V copy, cut and paste pages (egui delivers them as clipboard events).
         let crate::page_keys::Clipboard { copy, cut, paste } = keys.clipboard(ctx);
-        if copy && profile.allows_id("page.copy") || cut && profile.allows_id("page.cut") {
+        if pages_on && (copy && profile.allows_id("page.copy") || cut && profile.allows_id("page.cut")) {
             view.pending_action = Some(ViewAction::CopyPages { cut });
         }
-        if paste && profile.allows_id("page.paste") {
+        if pages_on && paste && profile.allows_id("page.paste") {
             view.pending_action = Some(ViewAction::PastePages);
         }
-        if del && targets.len() < n && profile.allows_id("page.delete") {
+        if pages_on && del && targets.len() < n && profile.allows_id("page.delete") {
             view.pending_edit = Some(Edit::DeletePages { pages: targets });
         }
         if esc {

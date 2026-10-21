@@ -758,9 +758,7 @@ fn apply_view_pref_changes(view: &mut crate::DocView, defaults: &ViewDefaults, c
 fn card_documents_and_view(ui: &mut egui::Ui, app: &mut PdfCraftApp, t: &Tokens, ctx: &mut PrefSearchContext) {
     ui.horizontal(|ui| {
         ctx.label_primary(ui, tl!("Default workspace mode"), t);
-        // Edit, Convert and E-Sign open their tool group: offered while the profile shows it.
-        let shows = |group: &str, feature| !app.profile.hides_group(group) && app.profile.allows_feature(feature);
-        let offered = [true, true, shows("edit", Feature::EditContent), shows("export", Feature::Export), shows("fill_sign", Feature::FillSign)];
+        // Only the modes the profile allows.
         let modes: Vec<(crate::Mode, &str)> = [
             (crate::Mode::AllTools, tl!("All tools")),
             (crate::Mode::Read, tl!("Read")),
@@ -769,8 +767,7 @@ fn card_documents_and_view(ui: &mut egui::Ui, app: &mut PdfCraftApp, t: &Tokens,
             (crate::Mode::Sign, tl!("E-Sign")),
         ]
         .into_iter()
-        .zip(offered)
-        .filter_map(|(choice, offered)| offered.then_some(choice))
+        .filter(|(mode, _)| app.allows_mode(*mode))
         .collect();
         ctx.pill_choice(ui, t, &mut app.default_mode, &modes);
     });
