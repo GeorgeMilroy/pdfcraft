@@ -36,6 +36,9 @@ pub mod parts {
     pub const QUICK_BAR: &str = "ui:quick_bar";
     /// The Tools panel on the left.
     pub const TOOLS_PANEL: &str = "ui:tools_panel";
+    /// Managing the custom stamp library (Create custom stamp…, Delete stamp); its stamps can
+    /// still be placed.
+    pub const STAMPS_CUSTOM: &str = "stamps.custom";
     /// A right-hand panel, as `panel:<name>`: `comments`, `bookmarks`, `pages`, `fields`,
     /// `layers`, `attachments`, `signatures`, `accessibility`, `tags`, `search`, `compare`
     /// ([`super::UiProfile::shows_panel`]).

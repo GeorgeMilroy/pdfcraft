@@ -499,9 +499,16 @@ impl PdfCraftApp {
     }
 
     /// Save an attachment to disk, or open a PDF attachment in a new tab (or go to the tab it is
-    /// already open in). Only bytes that are a PDF open, whatever the file's name says; anything
-    /// else asked to open is offered to save.
+    /// already open in), unless the profile refuses it ([`comments::attachment_offers`]). Only bytes
+    /// that are a PDF open, whatever the file's name says; anything else asked to open is offered
+    /// to save.
     pub fn attachment_action(&mut self, doc: DocId, index: usize, open: bool) {
+        let (save_on, open_on) = comments::attachment_offers(&self.profile);
+        let allowed = if open { open_on } else { save_on };
+        if !allowed {
+            self.notify(tl!("Not allowed"));
+            return;
+        }
         let Some(d) = self.session.get(doc) else { return };
         let Some(att) = d.info.attachments.get(index).cloned() else { return };
         let data = pdfcraft_render::attachment_data(&d.bytes, d.password.as_deref(), &att);

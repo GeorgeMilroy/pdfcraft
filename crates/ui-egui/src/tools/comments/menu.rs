@@ -1,40 +1,61 @@
 use super::input::delete_selected;
 use super::paint::edit_anchor;
-use super::state::{Composer, ComposerKind, Gesture};
+use super::state::{Composer, ComposerKind, Gesture, MenuGate};
 use super::{
     Annotation, Color32, CommentPrefs, CommentTool, DocInfo, DocView, Edit, Rect, ReviewState, Rgb, SELECT_BLUE, SWATCHES, Sense, Stroke, color32,
     defaultable, icons, theme, vec2,
 };
+use crate::RightPanel;
+use crate::features::Feature;
+use crate::profile::UiProfile;
+
+/// What an attached file's items offer in `profile`: (Save attachment…, Open in a new tab).
+/// Saving needs the download feature; opening a tab needs the app, File ▸ Open and the tab strip.
+pub(crate) fn attachment_offers(profile: &UiProfile) -> (bool, bool) {
+    let open = profile.allows_feature(Feature::App) && profile.allows_id("file.open") && profile.shows_part(crate::profile::parts::TABS);
+    (profile.allows_feature(Feature::Download), open)
+}
 
 /// Save attachment… and, for a PDF, Open in a new tab, first in a file attachment comment's
 /// menus as in the Attachments panel: the comment is where the reader finds its file. Reading
-/// the file changes nothing, so a read-only document offers them too.
-pub(crate) fn attachment_items(ui: &mut egui::Ui, view: &mut DocView, info: &DocInfo, a: &Annotation) {
+/// the file changes nothing, so a read-only document offers them too; the profile can refuse
+/// them ([`attachment_offers`]).
+pub(crate) fn attachment_items(ui: &mut egui::Ui, view: &mut DocView, info: &DocInfo, a: &Annotation, profile: &UiProfile) {
     let source = pdfcraft_render::AttachmentSource::Annotation { page: a.page, index: a.index };
     let Some(file) = info.attachments.iter().find(|f| f.source == source) else { return };
-    if ui.button(tl!("Save attachment…")).clicked() {
+    let (save, open) = attachment_offers(profile);
+    let open = open && file.name.to_lowercase().ends_with(".pdf");
+    if save && ui.button(tl!("Save attachment…")).clicked() {
         view.comments.attachment_request = Some((a.page, a.index, false));
         ui.close();
     }
-    if file.name.to_lowercase().ends_with(".pdf") && ui.button(tl!("Open in a new tab")).clicked() {
+    if open && ui.button(tl!("Open in a new tab")).clicked() {
         view.comments.attachment_request = Some((a.page, a.index, true));
         ui.close();
     }
-    ui.separator();
+    if save || open {
+        ui.separator();
+    }
 }
 
-/// What the canvas context menu may offer.
+/// What the canvas context menu may offer: the profile hides what it refuses, and the document's
+/// permissions grey out what they don't allow.
 #[derive(Clone, Copy, Debug)]
-pub(crate) struct MenuRights {
+pub(crate) struct MenuRights<'a> {
+    /// What the host lets the interface do.
+    pub(crate) profile: &'a UiProfile,
     /// Comments may be added and changed.
     pub(crate) allowed: bool,
     /// Copied comments wait to be pasted.
     pub(crate) can_paste: bool,
+    /// The document allows copying text.
+    pub(crate) can_copy: bool,
     /// The document's pages may change (Flatten comments draws into them).
     pub(crate) can_modify: bool,
 }
 
-/// Items of the canvas context menu for the selected comment (or the page).
+/// Items of the canvas context menu for the selected comment (or the page). Items whose
+/// feature the profile refuses are left out; the document's permissions grey out the rest.
 /// `deletable`: whether Delete would delete the comment at (page, index) (the engine's
 /// `Document::annotation_deletable`: unlocked, and no locked reply to it).
 pub(crate) fn context_menu(
@@ -43,9 +64,10 @@ pub(crate) fn context_menu(
     info: &DocInfo,
     deletable: &dyn Fn(usize, usize) -> bool,
     prefs: &CommentPrefs,
-    rights: MenuRights,
+    rights: MenuRights<'_>,
 ) -> Option<CanvasAction> {
-    let MenuRights { allowed, can_paste, can_modify } = rights;
+    let MenuRights { profile, allowed, can_paste, can_copy, can_modify } = rights;
+    let gate = MenuGate { profile, allowed, can_copy, can_modify };
     let mut action = None;
     // Connected lines, a polygon or a cloud being drawn: finish it from the menu, as other
     // editors do (Enter and a double-click finish it too), take the last point back, or stop.
@@ -72,8 +94,9 @@ pub(crate) fn context_menu(
     match selected {
         Some(a) => {
             let (page, index) = (a.page, a.index);
-            attachment_items(ui, view, info, a);
-            if ui.add_enabled(allowed, egui::Button::new(tl!("Edit text…"))).clicked() {
+            let changes = gate.changes(a);
+            attachment_items(ui, view, info, a, gate.profile);
+            if changes && ui.add_enabled(allowed, egui::Button::new(tl!("Edit text…"))).clicked() {
                 view.comments.composer = Some(Composer {
                     page,
                     at: edit_anchor(info, a),
@@ -83,99 +106,117 @@ pub(crate) fn context_menu(
                 });
                 ui.close();
             }
-            if ui.add_enabled(allowed, egui::Button::new(tl!("Reply"))).clicked() {
+            // Replies are typed in the Comments panel.
+            if gate.threads() && gate.profile.shows_panel(RightPanel::Comments) && ui.add_enabled(allowed, egui::Button::new(tl!("Reply"))).clicked()
+            {
                 view.comments.reveal = true;
                 action = Some(CanvasAction::OpenComments);
                 ui.close();
             }
             ui.add_enabled_ui(allowed, |ui| {
-                ui.menu_button(tl!("Set status"), |ui| {
-                    for s in [ReviewState::None, ReviewState::Accepted, ReviewState::Cancelled, ReviewState::Completed, ReviewState::Rejected] {
-                        if ui.button(tl!(s.name())).clicked() {
-                            action =
-                                Some(CanvasAction::Edit(Box::new(Edit::SetAnnotationStatus { page, index, state: s, author: prefs.author.clone() })));
+                if gate.threads() {
+                    ui.menu_button(tl!("Set status"), |ui| {
+                        for s in [ReviewState::None, ReviewState::Accepted, ReviewState::Cancelled, ReviewState::Completed, ReviewState::Rejected] {
+                            if ui.button(tl!(s.name())).clicked() {
+                                action = Some(CanvasAction::Edit(Box::new(Edit::SetAnnotationStatus {
+                                    page,
+                                    index,
+                                    state: s,
+                                    author: prefs.author.clone(),
+                                })));
+                                ui.close();
+                            }
+                        }
+                    });
+                }
+                if changes {
+                    let keep_open = egui::containers::menu::MenuConfig::new().close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside);
+                    let _ = egui::containers::menu::SubMenuButton::new(tl!("Colour")).config(keep_open).ui(ui, |ui| {
+                        if let Some(c) = swatch_grid(ui, a.color.map(|c| c.map(f64::from))) {
+                            // Several selected: the app gives each of them the colour.
+                            action = Some(if several > 0 {
+                                CanvasAction::Colour(c)
+                            } else {
+                                CanvasAction::Edit(Box::new(Edit::StyleAnnotation {
+                                    page,
+                                    index,
+                                    color: Some(c),
+                                    opacity: None,
+                                    width: None,
+                                    endings: None,
+                                }))
+                            });
                             ui.close();
                         }
-                    }
-                });
-                let keep_open = egui::containers::menu::MenuConfig::new().close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside);
-                let _ = egui::containers::menu::SubMenuButton::new(tl!("Colour")).config(keep_open).ui(ui, |ui| {
-                    if let Some(c) = swatch_grid(ui, a.color.map(|c| c.map(f64::from))) {
-                        // Several selected: the app gives each of them the colour.
-                        action = Some(if several > 0 {
-                            CanvasAction::Colour(c)
-                        } else {
-                            CanvasAction::Edit(Box::new(Edit::StyleAnnotation {
-                                page,
-                                index,
-                                color: Some(c),
-                                opacity: None,
-                                width: None,
-                                endings: None,
-                            }))
-                        });
-                        ui.close();
-                    }
-                });
+                    });
+                }
             });
             // The checkmark of the reviewer using this copy: checkmarks are each reviewer's own
             // (ISO 32000-2 Table 174: "The annotation has been marked by the user").
             let marked = pdfcraft_render::ReviewStates::new(&info.annotations).marked_by(a, &prefs.author);
-            if ui.add_enabled(allowed, egui::Button::new(tl!(if marked { "Remove checkmark" } else { "Mark with checkmark" }))).clicked() {
+            if changes && ui.add_enabled(allowed, egui::Button::new(tl!(if marked { "Remove checkmark" } else { "Mark with checkmark" }))).clicked() {
                 action = Some(CanvasAction::Edit(Box::new(Edit::MarkAnnotation { page, index, marked: !marked, author: prefs.author.clone() })));
                 ui.close();
             }
-            if ui.button(tl!("Copy text")).clicked() {
+            if gate.copies() && ui.add_enabled(gate.can_copy, egui::Button::new(tl!("Copy text"))).clicked() {
                 ui.ctx().copy_text(a.contents.clone().unwrap_or_default());
                 ui.close();
             }
-            ui.separator();
             // The comments themselves, to paste into this or another document (⌘C / ⌘V too).
+            let (copies, pastes) = (gate.profile.allows_id("comment.copy"), gate.profile.allows_id("comment.paste"));
+            if copies || pastes {
+                ui.separator();
+            }
             let copy_key = crate::commands::shortcut_label(ui.ctx(), crate::commands::COPY);
-            if ui.add(egui::Button::new(tl!(if several > 0 { "Copy comments" } else { "Copy comment" })).shortcut_text(copy_key)).clicked() {
+            if copies && ui.add(egui::Button::new(tl!(if several > 0 { "Copy comments" } else { "Copy comment" })).shortcut_text(copy_key)).clicked() {
                 view.comments.copy_request = true;
                 ui.close();
             }
             let paste_key = crate::commands::shortcut_label(ui.ctx(), crate::commands::PASTE);
-            if ui.add_enabled(allowed && can_paste, egui::Button::new(tl!("Paste comments")).shortcut_text(paste_key)).clicked() {
+            if pastes && ui.add_enabled(allowed && can_paste, egui::Button::new(tl!("Paste comments")).shortcut_text(paste_key)).clicked() {
                 let at = view.comments.context_at.unwrap_or((page, [f64::from(a.rect[0]), f64::from(a.rect[1])]));
                 view.comments.paste_request = Some(at);
                 ui.close();
             }
-            ui.separator();
-            // The engine's own check, for each selected comment: a locked comment, or one with a
-            // locked reply, stays. On a group subordinate, Delete takes just it, as Acrobat's does.
-            let (dpage, dindex) = view.comments.target().unwrap_or((page, index));
-            let deletes = deletable(dpage, dindex) && view.comments.also.iter().all(|&(p, i)| deletable(p, i));
-            if ui.add_enabled(allowed && deletes, egui::Button::new(tl!(if several > 0 { "Delete comments" } else { "Delete" }))).clicked() {
-                action = delete_selected(&mut view.comments, info).map(|e| CanvasAction::Edit(Box::new(e)));
-                ui.close();
-            }
-            if ui.add_enabled(allowed, egui::Button::new(tl!("Properties…"))).clicked() {
-                action = Some(CanvasAction::Properties(page, index));
-                ui.close();
-            }
-            if ui.add_enabled(defaultable(a), egui::Button::new(tl!("Make Current Properties Default"))).clicked() {
-                view.comments.default_request = Some((page, index));
-                ui.close();
+            if changes {
+                ui.separator();
+                // The engine's own check, for each selected comment: a locked comment, or one with a
+                // locked reply, stays. On a group subordinate, Delete takes just it, as Acrobat's does.
+                // Each other selected comment's kind must be one the profile lets change too.
+                let (dpage, dindex) = view.comments.target().unwrap_or((page, index));
+                let changes_also = |p: usize, i: usize| info.annotations.iter().find(|x| x.page == p && x.index == i).is_none_or(|x| gate.changes(x));
+                let deletes = deletable(dpage, dindex) && view.comments.also.iter().all(|&(p, i)| deletable(p, i) && changes_also(p, i));
+                if ui.add_enabled(allowed && deletes, egui::Button::new(tl!(if several > 0 { "Delete comments" } else { "Delete" }))).clicked() {
+                    action = delete_selected(&mut view.comments, info).map(|e| CanvasAction::Edit(Box::new(e)));
+                    ui.close();
+                }
+                if ui.add_enabled(allowed, egui::Button::new(tl!("Properties…"))).clicked() {
+                    action = Some(CanvasAction::Properties(page, index));
+                    ui.close();
+                }
+                if ui.add_enabled(defaultable(a), egui::Button::new(tl!("Make Current Properties Default"))).clicked() {
+                    view.comments.default_request = Some((page, index));
+                    ui.close();
+                }
             }
         }
         None => {
             if let Some((page, at)) = view.comments.context_at
+                && gate.profile.allows_id("comment.note")
                 && ui.add_enabled(allowed, egui::Button::new(tl!("Add a sticky note here"))).clicked()
             {
                 view.comments.composer = Some(Composer { page, at, kind: ComposerKind::Note, text: String::new(), focus: true });
                 ui.close();
             }
-            if ui.button(tl!("Comments panel")).clicked() {
+            if gate.profile.shows_panel(RightPanel::Comments) && ui.button(tl!("Comments panel")).clicked() {
                 action = Some(CanvasAction::OpenComments);
                 ui.close();
             }
         }
     }
     // Every comment of the document into its pages, as Comment ▸ Flatten comments does: signed
-    // or reviewed pages whose comments should no longer move.
-    if !info.annotations.is_empty() {
+    // or reviewed pages whose comments should no longer move. Only where the profile allows it.
+    if !info.annotations.is_empty() && gate.profile.allows_id("comment.flatten") {
         ui.separator();
         if ui.add_enabled(can_modify, egui::Button::new(tl!("Flatten comments"))).clicked() {
             view.comments.select(None);

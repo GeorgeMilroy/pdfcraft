@@ -4,11 +4,13 @@ use super::geometry::{
 };
 use super::paint::{closes_at, drawn_shape, edit_anchor, erase, moves_box_only, new_comment};
 use super::popups::has_popup;
+use super::state::feature_of;
 use super::state::{Composer, ComposerKind, Gesture, PageCx};
 use super::{Annotation, CommentPrefs, CommentTool, CommentView, DocInfo, DocView, Edit, Pos2, QuickTool, Rect, Shape, vec2};
 use crate::page_cursor::{Layer, Subject};
 use crate::page_keys::PageKeys;
 use crate::page_router::{CommentPart, Hit, Owner, PagePress};
+use crate::profile::UiProfile;
 
 /// Comment input on one page, before text selection runs. `press` is what this page has to do with
 /// the press the pages hold: a press on a comment where the tool reaches it ([`hit`]: the Select
@@ -115,7 +117,7 @@ pub(crate) fn hit(cx: &PageCx<'_>, view: &DocView, p: Pos2, on_link: bool) -> Op
         _ => return None,
     };
     let bodies = matches!(cx.tool, QuickTool::Select | QuickTool::Fill(_));
-    if let Some(a) = view.comments.selected.filter(|(page, _)| *page == cx.page).and_then(|(_, i)| cx.get(i)).filter(|a| pick(a) && cx.allowed) {
+    if let Some(a) = view.comments.selected.filter(|(page, _)| *page == cx.page).and_then(|(_, i)| cx.get(i)).filter(|a| pick(a) && cx.changes(a)) {
         if reaches_points(cx.tool)
             && reshapable(a)
             && let Some(point) = point_handle(cx, a, p)
@@ -146,7 +148,8 @@ pub(crate) fn hit(cx: &PageCx<'_>, view: &DocView, p: Pos2, on_link: bool) -> Op
         return None;
     }
     let markup = on_text(a);
-    let icon = if cx.allowed && !markup { egui::CursorIcon::Move } else { egui::CursorIcon::PointingHand };
+    // Moving needs the document's permission and the profile's for the comment's kind.
+    let icon = if cx.changes(a) && !markup { egui::CursorIcon::Move } else { egui::CursorIcon::PointingHand };
     // Text markup does not move: a click selects it, a drag across it selects the text.
     Some(Hit { declines_drag: markup || member, ..Hit::new(Owner::Comment { index: a.index, part: CommentPart::Body }, layer(a), icon) })
 }
@@ -255,12 +258,12 @@ fn select_input(
         && let (Some((a, part)), Some(o)) = (owner, origin)
     {
         match part {
-            CommentPart::Point(point) => {
+            CommentPart::Point(point) if cx.changes(a) => {
                 let points = a.points.iter().map(|q| [f64::from(q[0]), f64::from(q[1])]).collect();
                 cv.gesture = Some(Gesture::Reshape { page: cx.page, index: a.index, point, points });
                 consumed = true;
             }
-            CommentPart::Handle(x, y) => {
+            CommentPart::Handle(x, y) if cx.changes(a) => {
                 // On screen, the image is also turned by the view's rotation.
                 let turned = !cx.xf.rot.is_multiple_of(180);
                 let aspect_ratio = view.signature_drag.aspect_ratio(cx.page, a.index).map(|ratio| if turned { ratio.recip() } else { ratio });
@@ -289,12 +292,12 @@ fn select_input(
                     cv.also.retain(|k| *k != grabbed);
                 }
                 cv.reveal = true;
-                if cx.allowed {
+                if cx.changes(a) {
                     cv.gesture = Some(Gesture::Move { page: cx.page, index: a.index, from: o });
                 }
                 consumed = true;
             }
-            CommentPart::Body => {}
+            CommentPart::Body | CommentPart::Point(_) | CommentPart::Handle(..) => {}
         }
     }
     let live =
@@ -341,6 +344,7 @@ fn select_input(
         && on_page
         && cx.allowed
         && let Some((a, _)) = owner
+        && cx.changes(a)
     {
         cv.select_only((cx.page, a.index));
         // A double-click opens the comment's pop-up window, as in Acrobat; a text box, whose
@@ -740,8 +744,9 @@ impl Gestures<'_> {
 }
 
 /// Delete / Escape handling for comments (only while no text field has focus, and nothing is over
-/// the pages).
-pub(crate) fn keys(ctx: &egui::Context, keys: PageKeys, view: &mut DocView, info: &DocInfo, tool: &mut QuickTool, allowed: bool) {
+/// the pages). Delete leaves a locked comment, and does nothing while a selected comment's kind is
+/// one the profile refuses.
+pub(crate) fn keys(ctx: &egui::Context, keys: PageKeys, view: &mut DocView, info: &DocInfo, tool: &mut QuickTool, allowed: bool, profile: &UiProfile) {
     if ctx.egui_wants_keyboard_input() {
         return;
     }
@@ -757,7 +762,12 @@ pub(crate) fn keys(ctx: &egui::Context, keys: PageKeys, view: &mut DocView, info
             *tool = QuickTool::Select;
         }
     }
-    if allowed && cv.selected.is_some() && (keys.pressed(ctx, egui::Key::Delete) || keys.pressed(ctx, egui::Key::Backspace)) {
+    let refused = |(page, index): (usize, usize)| info.annotations.iter().any(|a| a.page == page && a.index == index && !profile.allows_feature(feature_of(a)));
+    if allowed
+        && cv.selected.is_some()
+        && !cv.selection().into_iter().chain(cv.target()).any(refused)
+        && (keys.pressed(ctx, egui::Key::Delete) || keys.pressed(ctx, egui::Key::Backspace))
+    {
         view.pending_edit = delete_selected(cv, info);
     }
 }

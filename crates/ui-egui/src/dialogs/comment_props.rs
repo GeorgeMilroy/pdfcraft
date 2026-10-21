@@ -52,6 +52,9 @@ fn ending_label(ending: LineEnding) -> &'static str {
 impl PdfCraftApp {
     /// Attach file: ask for a file (or take `attach_override`) and attach it at `at`.
     pub fn attach_file_comment(&mut self, page: usize, at: [f64; 2]) {
+        if !self.profile.allows_id("comment.attach") {
+            return;
+        }
         match self.attach_override.take() {
             Some((file, data)) => self.add_attachment_comment(page, at, file, data),
             #[cfg(not(target_arch = "wasm32"))]
@@ -92,6 +95,9 @@ impl PdfCraftApp {
     /// Make Current Properties Default: new comments of this kind take this one's colour,
     /// opacity and line width.
     pub fn make_comment_default(&mut self, page: usize, index: usize) {
+        if !self.may_change_comment(page, index) {
+            return;
+        }
         let Some(p) = self.active_ids().and_then(|(_, id)| self.session.get(id)).and_then(|doc| doc.comment_props(page, index)) else { return };
         self.make_props_default(page, index, &p);
     }
@@ -182,14 +188,29 @@ impl PdfCraftApp {
     /// Open Comment Properties for the comment at `(page, index)` of the active document. When it
     /// is one of several selected comments, the changes go to all of them.
     pub fn open_comment_props(&mut self, page: usize, index: usize) {
+        if !self.may_change_comment(page, index) {
+            return;
+        }
         let Some((i, id)) = self.active_ids() else { return };
         let Some(doc) = self.session.get(id) else { return };
         let Some(p) = doc.comment_props(page, index) else { return };
         let selection = self.views.get(i).map(|v| &v.comments).filter(|c| c.is_selected((page, index))).map(|c| c.selection()).unwrap_or_default();
-        let others =
-            selection.into_iter().filter(|k| *k != (page, index)).filter_map(|(pg, ix)| doc.comment_props(pg, ix).map(|c| (pg, ix, c))).collect();
+        // Only the other selected comments whose kind the profile lets change take the changes.
+        let others = selection
+            .into_iter()
+            .filter(|k| *k != (page, index))
+            .filter(|(pg, ix)| self.annotation_feature(id, *pg, *ix).is_some_and(|f| self.profile.allows_feature(f)))
+            .filter_map(|(pg, ix)| doc.comment_props(pg, ix).map(|c| (pg, ix, c)))
+            .collect();
         self.comment_props = Some(PropsDraft { page, index, tab: PropsTab::Appearance, original: p.clone(), edited: p, make_default: false, others });
         self.dialog = Some(crate::Dialog::CommentProps);
+    }
+
+    /// Whether the profile lets the comment at `(page, index)` of the active document change:
+    /// the feature of its kind is on.
+    fn may_change_comment(&self, page: usize, index: usize) -> bool {
+        let Some((_, id)) = self.active_ids() else { return false };
+        self.annotation_feature(id, page, index).is_some_and(|f| self.profile.allows_feature(f))
     }
 }
 

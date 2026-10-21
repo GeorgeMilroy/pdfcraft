@@ -68,13 +68,13 @@ pub(crate) fn paint_page(ui: &egui::Ui, painter: &egui::Painter, cx: &PageCx<'_>
             return paint_gesture(painter, cx, view);
         }
         let shift = ui.input(|i| i.modifiers.shift);
-        let points = cx.allowed && reaches_points(cx.tool) && reshapable(a);
+        let points = cx.changes(a) && reaches_points(cx.tool) && reshapable(a);
         if points && !is_callout(a) {
             return paint_points(painter, cx, view, a, pointer, shift);
         }
         let r = cx.adjusted_rect(a, cv.gesture.as_ref(), pointer, shift, view.pending_edit.as_ref()).expand(2.0);
         painter.rect_stroke(r, CornerRadius::ZERO, Stroke::new(1.0, SELECT_BLUE), egui::StrokeKind::Middle);
-        if cx.allowed && resizable(a) {
+        if cx.changes(a) && resizable(a) {
             for h in HANDLES {
                 let c = handle_pos(r, h);
                 painter.circle(c, 4.5, Color32::WHITE, Stroke::new(1.0, SELECT_BLUE));

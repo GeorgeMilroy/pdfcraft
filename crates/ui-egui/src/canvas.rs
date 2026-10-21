@@ -1534,6 +1534,7 @@ struct PageEnv<'a> {
     today: (i64, u32, u32),
     can_paste_image: bool,
     offers: Offers,
+    profile: &'a crate::profile::UiProfile,
 }
 
 /// What the profile ([`crate::profile::UiProfile`]) offers on the page this frame: what it refuses
@@ -1893,7 +1894,7 @@ fn cached_edit_images<'a>(view: &'a mut DocView, doc: &pdfcraft_engine::Document
 }
 
 fn draw_page(ui: &mut egui::Ui, view: &mut DocView, frame: &mut PageFrame<'_>, i: usize) {
-    let PageEnv { allowed, comments_hidden, doc, editing_content, info, keys, ppp, prefs, rects, redact_mark, scale, t, tool, .. } = frame.env;
+    let PageEnv { allowed, comments_hidden, doc, editing_content, info, keys, ppp, prefs, profile, rects, redact_mark, scale, t, tool, .. } = frame.env;
     let PageFrame { ptr, origin, visible, pressed, pointer, .. } = *frame;
     let r = snap_to_pixels(rects[i].translate(origin.to_vec2()), ppp);
     if !r.intersects(visible.expand(400.0)) {
@@ -1934,7 +1935,7 @@ fn draw_page(ui: &mut egui::Ui, view: &mut DocView, frame: &mut PageFrame<'_>, i
     if frame.env.text_links {
         view.refresh_text_links(i);
     }
-    let pcx = comments::PageCx { page: i, xf: &xf, ptr, info, tool, prefs, allowed, hidden: comments_hidden, redact_mark, keys };
+    let pcx = comments::PageCx { page: i, xf: &xf, ptr, info, tool, prefs, allowed, profile, hidden: comments_hidden, redact_mark, keys };
     // A cancelled press takes nothing until the button is up, though the page's menu still opens
     // where a right-click is. A page full screen doesn't show yet takes nothing at all. (A press
     // there gives nothing on the page an owner, so its release, once the page is in, takes nothing
@@ -2018,6 +2019,7 @@ fn draw_pages(
         visible_pages,
         y_shift,
         offers,
+        profile,
         ..
     } = *env;
     let animates = env.animates;
@@ -2342,7 +2344,7 @@ fn draw_pages(
                 info,
                 &|page, index| doc.annotation_deletable(page, index),
                 prefs,
-                comments::MenuRights { allowed, can_paste: can_paste_comments, can_modify },
+                comments::MenuRights { profile, allowed, can_paste: can_paste_comments, can_copy, can_modify },
             );
             return;
         }
@@ -3515,6 +3517,7 @@ pub fn document_area(app: &mut PdfCraftApp, index: usize, ui: &mut egui::Ui) {
     // Text selection runs for the Select tool and for the markup tools (highlight…).
     let selects_text = tool_selects_text(tool, preparing);
     let prefs = &app.comment_prefs;
+    let profile = &app.profile;
     let redact_mark = (app.redact_prefs.hover_fill, app.redact_prefs.opacity);
     let units = app.units;
     let allowed = doc.allows_annotation();
@@ -3636,6 +3639,7 @@ pub fn document_area(app: &mut PdfCraftApp, index: usize, ui: &mut egui::Ui) {
         today,
         can_paste_image,
         offers,
+        profile,
     };
     let mut page_out = PageOut::default();
     // Keyed by the view, not the document: with one document in both panes of split view, shared
@@ -3706,7 +3710,7 @@ pub fn document_area(app: &mut PdfCraftApp, index: usize, ui: &mut egui::Ui) {
     // One crop, then back to selecting (as Acrobat does).
     let cropped = view.pending_edit.as_ref().is_some_and(|e| matches!(e, pdfcraft_engine::Edit::SetPageBox { .. }));
     let mut tool = app.quick_tool;
-    comments::keys(ui.ctx(), keys, view, info, &mut tool, allowed);
+    comments::keys(ui.ctx(), keys, view, info, &mut tool, allowed, &app.profile);
     if preparing {
         crate::prepare::keys(ui.ctx(), keys, view);
     }
@@ -3739,8 +3743,9 @@ pub fn document_area(app: &mut PdfCraftApp, index: usize, ui: &mut egui::Ui) {
     let field_props = field_props.then(|| view.prepare.selected.clone()).flatten();
     match canvas_action {
         Some(comments::CanvasAction::Edit(e)) => view.pending_edit = Some(*e),
-        // `choose_right_panel` would borrow all of `app` while `view` is held; same effect.
-        Some(comments::CanvasAction::OpenComments) => {
+        // `choose_right_panel` would borrow all of `app` while `view` is held; same effect, and
+        // the same refusal of a panel the profile hides.
+        Some(comments::CanvasAction::OpenComments) if app.profile.shows_panel(RightPanel::Comments) => {
             app.right = Some(RightPanel::Comments);
             app.comments_panel_closed = false;
         }
@@ -3748,7 +3753,7 @@ pub fn document_area(app: &mut PdfCraftApp, index: usize, ui: &mut egui::Ui) {
         Some(comments::CanvasAction::Colour(c)) => recolour = Some(c),
         Some(comments::CanvasAction::CopyImage(p, i)) => image_action = Some(crate::edit_text_ui::ImageAction::Copy(p, i)),
         Some(comments::CanvasAction::CopyImageFile(p, i)) => image_action = Some(crate::edit_text_ui::ImageAction::CopyFile(p, i)),
-        None => {}
+        Some(comments::CanvasAction::OpenComments) | None => {}
     }
     schedule_presentation_turn(ui, view, present, clicked_link.is_some() || on_object && present.is_some());
     let remote_open = follow_link(app, index, clicked_link);
