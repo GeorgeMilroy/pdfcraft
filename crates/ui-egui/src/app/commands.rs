@@ -61,6 +61,10 @@ impl PdfCraftApp {
     pub fn set_profile(&mut self, profile: crate::profile::UiProfile) {
         self.profile = profile;
         self.enforce_profile();
+        // A host may set it between `logic` and `ui`: this frame's panels draw with it.
+        if let Some(ctx) = self.ctx.clone() {
+            dialogs::publish_profile(self, &ctx);
+        }
     }
 
     /// Puts down what the profile doesn't allow (after it changed; checked every frame too): an
@@ -86,6 +90,23 @@ impl PdfCraftApp {
             self.form_preview = false;
         }
         if self.dialog.is_some_and(|d| !self.allows_dialog(d)) {
+            self.dialog = None;
+        }
+        // Signing and certifying are separate commands: the one the draft is for must be allowed.
+        if self.dialog == Some(Dialog::Sign)
+            && let Some(d) = &self.sign_draft
+            && !self.profile.allows_id(if d.certify.is_some() { "sign.certify" } else { "sign.digital" })
+        {
+            self.dialog = None;
+        }
+        // A Properties tab the profile refuses gives way to one it allows (the dialog is open, so
+        // one is).
+        if let Some(Dialog::Properties(tab)) = self.dialog
+            && !self.profile.allows_id(tab.command())
+        {
+            self.dialog = PropsTab::ALL.into_iter().find(|t| self.profile.allows_id(t.command())).map(Dialog::Properties);
+        }
+        if self.dialog == Some(Dialog::CreateStamp) && !self.manages_custom_stamps() {
             self.dialog = None;
         }
         if !self.allows_mode(self.mode) {
