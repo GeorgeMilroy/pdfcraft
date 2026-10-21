@@ -280,7 +280,7 @@ impl PdfCraftApp {
         let list = |ids: &[&'static str], used: &mut Vec<&'static str>| -> Vec<Node> {
             ids.iter()
                 .filter(|&&id| community || pdfcraft_engine::links::for_command(id).is_none())
-                .filter(|&&id| self.profile.allows_id(id))
+                .filter(|&&id| self.menu_allows(id))
                 .map(|&id| {
                     if id == SEP {
                         return Node::Separator;
@@ -377,6 +377,25 @@ impl PdfCraftApp {
         bar.tag_item(&CommandRef::new("app.preferences"), ItemRole::Settings);
         craft_menu::apply_state(&mut bar, |command| self.menu_state(ctx, command));
         bar
+    }
+
+    /// Whether the profile ([`crate::profile::UiProfile`]) lets a menu item show. Menu-only items
+    /// follow what they do: Cut and Paste are the page grid's, Delete removes what is selected
+    /// (each removal is checked again where it happens), and the zoom and view rotation keys
+    /// belong to the viewer.
+    fn menu_allows(&self, id: &str) -> bool {
+        let profile = &self.profile;
+        if profile.hides(id) {
+            return false;
+        }
+        match id {
+            CUT => profile.allows_id("page.cut"),
+            PASTE => profile.allows_id("page.paste"),
+            DELETE => !profile.read_only && profile.features.is_none_or(|f| f.edits()),
+            NO_RECENT => profile.allows_id("file.open_recent"),
+            SELECT_ALL | ACTUAL_SIZE | PAGE_LEVEL | FIT_WIDTH | FIT_HEIGHT | ZOOM_IN | ZOOM_OUT | ROTATE_CW | ROTATE_CCW => true,
+            id => profile.allows_id(id),
+        }
     }
 
     /// One item: a registry command with its live label (Undo names the edit) and shortcut, or a

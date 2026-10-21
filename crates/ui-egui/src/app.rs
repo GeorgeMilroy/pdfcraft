@@ -126,6 +126,7 @@ impl PdfCraftApp {
             host_save: None,
             host_dirty: None,
             profile: profile::UiProfile::default(),
+            edit_log: std::collections::HashMap::new(),
             close_request: None,
             save_prompt_button: Default::default(),
             save_prompt_seen: false,

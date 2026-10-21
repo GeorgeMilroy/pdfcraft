@@ -43,6 +43,7 @@ pub use sign_ui::{DigitalIdEntry, SignDraft, SignGraphic, SignStep};
 mod bidi;
 pub mod brand;
 mod dialogs;
+pub mod features;
 pub mod profile;
 pub use edit_text_ui::CropMode;
 mod editing;
@@ -407,6 +408,8 @@ pub struct PdfCraftApp {
     pub host_dirty: Option<HostDirtyFn>,
     /// What an embedding host lets the interface do (view only, comments only, hidden commands).
     pub profile: profile::UiProfile,
+    /// The features of each undoable step ([`editing::EditLog`]).
+    pub(crate) edit_log: std::collections::HashMap<pdfcraft_engine::DocId, editing::EditLog>,
     /// A pending "save changes?" question (closing a dirty tab or quitting).
     pub close_request: Option<CloseRequest>,
     /// The button of the "save changes?" question the keyboard has chosen; Save when it opens.
