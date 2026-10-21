@@ -304,7 +304,10 @@ impl PdfCraftApp {
     /// Start signing: the rectangle (or field) is known; show Sign with a Digital ID. Every way
     /// into signing comes here, so a profile without digital signatures stops it here.
     pub fn start_signing(&mut self, page: usize, rect: Option<[f64; 4]>, field: Option<String>, certify: Option<u8>) {
-        if !self.profile.allows_feature(Feature::DigitalSignatures) {
+        // Certifying is its own command: hiding it leaves approval signing, and the other way round.
+        let command = if certify.is_some() { "sign.certify" } else { "sign.digital" };
+        if !self.profile.allows_feature(Feature::DigitalSignatures) || !self.profile.allows_id(command) {
+            self.notify(tl!("Not allowed"));
             return;
         }
         self.refresh_os_key_store_ids();

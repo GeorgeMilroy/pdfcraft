@@ -241,7 +241,8 @@ pub(crate) fn page_input(
         let [x, y] = info.view_to_user(vx, vy);
         let mut point = [f64::from(x), f64::from(y)];
         let mut snapped = None;
-        if state.snap_enabled {
+        // Snapping is its own command: refused, the pointer measures where it is.
+        if state.snap_enabled && cx.profile.allows_id("measure.snap") {
             snapped = snap_to_content(state, doc, page, [vx, vy], xf.zoom().max(1e-6), point);
         }
         if let Some((snapped_point, kind)) = snapped {

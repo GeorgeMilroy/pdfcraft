@@ -312,6 +312,20 @@ pub struct CustomDraft {
     pub value: String,
 }
 
+impl PropsTab {
+    /// Every tab, in the order the dialog shows them.
+    pub const ALL: [Self; 7] = [Self::Description, Self::InitialView, Self::Security, Self::Fonts, Self::Custom, Self::Advanced, Self::SpaceAudit];
+
+    /// The command that opens this tab: Security is `protect.properties`, the rest
+    /// `file.properties`. The tab shows only while the profile allows it.
+    pub fn command(self) -> &'static str {
+        match self {
+            Self::Security => "protect.properties",
+            Self::Description | Self::InitialView | Self::Fonts | Self::Custom | Self::Advanced | Self::SpaceAudit => "file.properties",
+        }
+    }
+}
+
 /// Duplicate Field: the field and the pages (all, or a range, 1-based).
 #[derive(Clone, Debug, PartialEq)]
 pub struct DuplicateDraft {

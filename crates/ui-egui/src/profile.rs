@@ -149,6 +149,11 @@ impl UiProfile {
         if self.read_only && changes_documents(spec.needs) {
             return false;
         }
+        // Commands that need nothing of the document can still belong to an editing feature (the
+        // saved signature's Change and Remove): the legacy flags refuse those as allows_feature does.
+        if (self.read_only || self.comments_only) && features::command_feature(spec.id).is_some_and(|f| !self.allows_feature(f)) {
+            return false;
+        }
         if matches!(spec.id, "file.save" | "file.save_as") && !self.allows_save() {
             return false;
         }
