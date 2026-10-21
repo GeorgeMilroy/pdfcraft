@@ -129,7 +129,7 @@ impl PdfCraftApp {
             "digital_ids": self.digital_ids.iter().filter(|e| !e.path.starts_with("keychain:") && !e.path.starts_with("windows:")).collect::<Vec<_>>(),
             "trusted": trusted,
             "custom_stamps": stamps_ui::encode(&self.custom_stamps),
-            "javascript": self.session.javascript(),
+            "javascript": self.js_held.unwrap_or(self.session.javascript()),
             "actions": actions_ui::encode(&self.custom_actions),
             "combine_columns": self.combine_columns.to_json(),
             "combine_view": self.combine_view.as_str(),
@@ -352,7 +352,10 @@ impl PdfCraftApp {
         self.custom_stamps = stamps_ui::decode(&v["custom_stamps"]);
         self.custom_actions = actions_ui::decode(&v["actions"]);
         if let Some(on) = v["javascript"].as_bool() {
-            self.session.set_javascript(on);
+            match self.js_held.as_mut() {
+                Some(held) => *held = on,
+                None => self.session.set_javascript(on),
+            }
         }
         if let Ok(pems) = serde_json::from_value::<Vec<String>>(v["trusted"].clone()) {
             let certs = pems.iter().filter_map(|p| pdfcraft_engine::sign::x509::load_certificates(p.as_bytes()).ok()).flatten().collect();

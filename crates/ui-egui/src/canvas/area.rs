@@ -42,15 +42,6 @@ pub(super) fn page_scroll<R>(
     ui.scope_builder(egui::UiBuilder::new().scope_id(id), |ui| scroll.show_viewport(ui, draw)).inner
 }
 
-/// Open a web address from a link or a button, unless the profile turns such links off.
-pub(super) fn follow_url(app: &mut PdfCraftApp, url: &str, origin: crate::LinkOrigin) {
-    if app.profile.external_links == Some(false) {
-        app.notify(tl!("Not allowed"));
-        return;
-    }
-    app.request_document_url(url, origin);
-}
-
 /// Run a push button's action (the ones that need no JavaScript engine).
 pub(super) fn run_button(app: &mut PdfCraftApp, index: usize, name: &str, action: pdfcraft_engine::form_scripts::ButtonAction) {
     use crate::features::Feature;
@@ -91,7 +82,7 @@ pub(super) fn run_button(app: &mut PdfCraftApp, index: usize, name: &str, action
             "LastPage" => app.views[index].go_to_page(pages.saturating_sub(1)),
             other => app.notify_fmt("{name}: the {other} action isn't supported yet", &[("name", name), ("other", other)]),
         },
-        B::Uri(u) => follow_url(app, &u, crate::LinkOrigin::Button),
+        B::Uri(u) => app.request_document_url(&u, crate::LinkOrigin::Button),
         B::GoTo(p) => app.views[index].go_to_page(p.min(pages.saturating_sub(1))),
         B::ShowHide { fields, hide } => {
             let listed = |n: &String| fields.iter().any(|f| n == f || n.starts_with(&format!("{f}.")));

@@ -65,6 +65,12 @@ impl PdfCraftApp {
         if out.is_empty() {
             return;
         }
+        // Without JavaScript in the profile, nothing a script asked for happens (printing, links,
+        // saving, navigation, alerts); only what it printed is kept, in the console.
+        if !self.profile.allows_feature(Feature::JavaScript) {
+            self.js_console.log.extend(out.console);
+            return;
+        }
         self.js_console.log.extend(out.console.iter().cloned());
         for e in &out.errors {
             self.js_console.log.push(format!("Error: {e}"));
@@ -446,19 +452,14 @@ pub(crate) fn preferences_body(ui: &mut egui::Ui, app: &mut PdfCraftApp, t: &Tok
     ui.horizontal(|ui| {
         ui.label(tl!("Default workspace mode"));
         // Edit, Convert and E-Sign open their tool group: offered while the profile shows it.
-        let shows = |group: &str, feature| !app.profile.hides_group(group) && app.profile.allows_feature(feature);
-        let offered = [true, true, shows("edit", Feature::EditContent), shows("export", Feature::Export), shows("fill_sign", Feature::FillSign)];
-        for ((mode, label), offered) in [
+        for (mode, label) in [
             (crate::Mode::AllTools, "All tools"),
             (crate::Mode::Read, "Read"),
             (crate::Mode::Edit, "Edit"),
             (crate::Mode::Convert, "Convert"),
             (crate::Mode::Sign, "E-Sign"),
-        ]
-        .into_iter()
-        .zip(offered)
-        {
-            if offered {
+        ] {
+            if app.allows_mode(mode) {
                 widgets::radio_value(ui, &mut app.default_mode, mode, tl!(label));
             }
         }

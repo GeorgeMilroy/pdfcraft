@@ -2658,7 +2658,7 @@ fn follow_link(
                 view.go_to_dest(p, dest, &doc.info);
             }
         }
-        LinkTarget::Uri(u) => area::follow_url(app, &u, crate::LinkOrigin::Link),
+        LinkTarget::Uri(u) => app.request_document_url(&u, crate::LinkOrigin::Link),
         LinkTarget::SetLayers { changes, preserve_rb } => set_layers(app, index, &changes, preserve_rb),
         // Another file opens in a tab of its own: not without tabs and File ▸ Open.
         LinkTarget::RemoteGoTo { .. } if !app.profile.allows_feature(crate::features::Feature::App) || !app.profile.allows_id("file.open") => {

@@ -261,6 +261,10 @@ pub(super) fn stamp_palette(app: &mut PdfCraftApp, ui: &mut egui::Ui, t: &Tokens
 /// Edit a PDF ▸ Format text: for the selected added text (one undoable change), or the style
 /// new text gets.
 fn format_section(app: &mut PdfCraftApp, ui: &mut egui::Ui, t: &Tokens) {
+    // Formatting, the font pickers and the image panel edit page content.
+    if !offers(&app.profile, "edit.edit_text") {
+        return;
+    }
     // Editing a paragraph of existing text: its formatting, applied as it changes.
     if let Some((i, _)) = app.active_ids()
         && let Some(ed) = app.views[i].line_editor.clone()

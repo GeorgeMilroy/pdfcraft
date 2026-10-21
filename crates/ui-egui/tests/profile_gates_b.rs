@@ -229,3 +229,87 @@ fn the_accessibility_report_is_a_copy() {
     assert!(report(UiProfile::default()));
     assert!(!report(only(&[Feature::Accessibility])), "the report writes a file: download");
 }
+
+#[test]
+fn signature_apply_arms_the_tool_as_before_unless_the_profile_refuses_it() {
+    let apply = |profile: UiProfile| {
+        // No document: the default profile armed the tool all the same.
+        let mut h = Harness::builder().with_size(egui::vec2(1400.0, 900.0)).build_eframe(move |_cc| {
+            let mut app = PdfCraftApp::new();
+            app.set_option("language", "en").unwrap();
+            app.set_profile(profile);
+            app.set_option("dialog", "signature").unwrap();
+            app.signature_draft.text = "Ada Lovelace".into();
+            app
+        });
+        h.run_steps(3);
+        h.get_by_label("Apply").click();
+        h.run_steps(3);
+        assert!(h.state().signature.is_some(), "the signature is saved either way");
+        h.state().quick_tool
+    };
+    let signature = pdfcraft_ui_egui::QuickTool::Fill(pdfcraft_ui_egui::fill_sign::FillTool::Signature);
+    assert_eq!(apply(UiProfile::default()), signature);
+    // The dialog stays open for the change command, but placing the signature is refused.
+    let refused = UiProfile { hidden: ["sign.fill.signature".to_string()].into(), ..UiProfile::default() };
+    assert_ne!(apply(refused), signature);
+}
+
+#[test]
+fn scripts_ask_for_nothing_without_javascript() {
+    use pdfcraft_engine::js::{JsOutput, Request};
+    let output = || JsOutput {
+        alerts: vec![pdfcraft_engine::js::Message::plain("from a script")],
+        requests: vec![Request::GoToPage(1)],
+        ..JsOutput::default()
+    };
+    let mut h = harness(UiProfile::default());
+    let id = h.state().views[0].id;
+    h.state_mut().handle_js(id, output());
+    assert_eq!(h.state().toast.clone().map(|t| t.0).as_deref(), Some("from a script"), "the default profile shows the alert");
+
+    let mut h = harness(UiProfile::default());
+    let id = h.state().views[0].id;
+    h.state_mut().set_profile(only(&[Feature::Viewer]));
+    assert!(!h.state().session.javascript(), "documents' scripts are held off");
+    h.state_mut().handle_js(id, output());
+    h.run_steps(2);
+    assert!(h.state().toast.is_none(), "no alert");
+    assert_eq!(h.state().views[0].current, 0, "no navigation");
+    h.state_mut().set_profile(UiProfile::default());
+    assert!(h.state().session.javascript(), "the user's preference comes back with the feature");
+}
+
+#[test]
+fn the_accessibility_panel_follows_a_profile_change_on_the_same_frame() {
+    let mut h = harness(UiProfile::default());
+    h.state_mut().set_option("panel", "accessibility").unwrap();
+    h.run_steps(3);
+    assert!(shows(&h, "Check for accessibility"));
+    h.state_mut().set_profile(UiProfile { hidden: ["a11y.check".to_string()].into(), ..UiProfile::default() });
+    h.run_steps(1);
+    assert!(!shows(&h, "Check for accessibility"), "not drawn with last frame's profile");
+    // After a check, Check again needs a11y.check too.
+    h.state_mut().set_profile(UiProfile::default());
+    h.state_mut().run_accessibility_check();
+    h.run_steps(3);
+    assert!(shows(&h, "Check again"));
+    h.state_mut().set_profile(UiProfile { hidden: ["a11y.check".to_string()].into(), ..UiProfile::default() });
+    h.run_steps(1);
+    assert!(!shows(&h, "Check again"));
+}
+
+#[test]
+fn a_script_opens_no_web_page_when_the_profile_turns_links_off() {
+    use pdfcraft_engine::js::{JsOutput, Request};
+    let launch = || JsOutput { requests: vec![Request::LaunchUrl("https://example.org/".into())], ..JsOutput::default() };
+    let mut h = harness(UiProfile::default());
+    let id = h.state().views[0].id;
+    h.state_mut().handle_js(id, launch());
+    assert!(h.state().pending_link.is_some(), "the default profile asks the user");
+    let mut h = harness(UiProfile { external_links: Some(false), ..UiProfile::default() });
+    let id = h.state().views[0].id;
+    h.state_mut().handle_js(id, launch());
+    assert!(h.state().pending_link.is_none());
+    assert_eq!(h.state().toast.clone().map(|t| t.0).as_deref(), Some("Not allowed"));
+}

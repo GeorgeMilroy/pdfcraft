@@ -93,8 +93,9 @@ impl PdfCraftApp {
             && !space
         {
             self.space_hand = None;
+            // The tool from before Space comes back, unless the profile refuses it now.
             if self.quick_tool == QuickTool::Hand {
-                self.quick_tool = previous;
+                self.quick_tool = if previous.command().is_none_or(|id| self.profile.allows_id(id)) { previous } else { QuickTool::Select };
             }
         }
         if !free || !plain {

@@ -73,7 +73,6 @@ pub(super) fn notices(
     ui: &mut egui::Ui,
     t: &Tokens,
 ) -> Option<Notice> {
-    use crate::features::Feature;
     // A button for what the profile refuses is not drawn.
     let profile = crate::dialogs::frame_profile(ui.ctx());
     let info = &doc.info;
@@ -95,7 +94,8 @@ pub(super) fn notices(
                     if icons::button(ui, "x", 22.0, false, tl!("Dismiss")).clicked() {
                         view.disk_changed = false;
                     }
-                    reload = profile.allows_save() && crate::widgets::pill_button(ui, tl!("Reload"), false).clicked();
+                    // Reload drops the unsaved changes, as File ▸ Revert does.
+                    reload = profile.allows_id("file.revert") && crate::widgets::pill_button(ui, tl!("Reload"), false).clicked();
                 });
             });
         });
@@ -128,7 +128,10 @@ pub(super) fn notices(
     if let Some((icon, color, template, arg)) = signed {
         let mut open = false;
         notice_bar(ui, t, icon, color, crate::i18n::fmt(tl!(template), &[("by", &arg)]), |ui| {
-            if profile.shows_panel(crate::RightPanel::Signatures) && crate::widgets::pill_button(ui, tl!("Signature panel"), false).clicked() {
+            if profile.shows_panel(crate::RightPanel::Signatures)
+                && profile.allows_id("sign.panel")
+                && crate::widgets::pill_button(ui, tl!("Signature panel"), false).clicked()
+            {
                 open = true;
             }
         });
@@ -222,8 +225,7 @@ pub(super) fn notices(
         if secured && profile.allows_id("file.properties") && crate::widgets::pill_button(ui, tl!("Security settings"), false).clicked() {
             open_security = true;
         }
-        if secured && doc.can_unlock() && profile.allows_feature(Feature::Security) && crate::widgets::pill_button(ui, tl!("Unlock…"), true).clicked()
-        {
+        if secured && doc.can_unlock() && profile.allows_id("protect.unlock") && crate::widgets::pill_button(ui, tl!("Unlock…"), true).clicked() {
             unlock = true;
         }
         // Only when the bar shows the security message: a form's stopped scripts come first.

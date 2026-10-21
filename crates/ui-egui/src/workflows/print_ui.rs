@@ -106,7 +106,7 @@ enum JobNews {
 }
 
 /// The printer the dialog preselects: the system default, else the first.
-fn default_printer(printers: &[spool::Printer]) -> Option<String> {
+pub(super) fn default_printer(printers: &[spool::Printer]) -> Option<String> {
     printers.iter().find(|p| p.default).or(printers.first()).map(|p| p.name.clone())
 }
 

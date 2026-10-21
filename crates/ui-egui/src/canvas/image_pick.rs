@@ -161,7 +161,9 @@ impl PdfCraftApp {
     pub(crate) fn image_pick_keys(&mut self, i: usize, ctx: &egui::Context) {
         let Some(picked) = self.views.get(i).and_then(|v| v.picked_image) else { return };
         if !self.profile.allows_id("edit.copy") {
-            self.views[i].picked_image = None;
+            if let Some(v) = self.views.get_mut(i) {
+                v.picked_image = None;
+            }
             return;
         }
         if ctx.egui_wants_keyboard_input() {

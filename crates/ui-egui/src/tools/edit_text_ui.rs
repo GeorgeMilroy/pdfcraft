@@ -52,12 +52,13 @@ impl Offers {
     }
 
     pub(crate) fn of(profile: &crate::profile::UiProfile) -> Self {
+        let offers = |id| crate::panels::offers(profile, id);
         Self {
-            edit: profile.allows_id("edit.edit_text"),
-            copy: profile.allows_id("edit.copy"),
-            link: profile.allows_id("edit.link"),
-            redact: profile.allows_id("redact.mark"),
-            recognize: profile.allows_id("ocr.recognize"),
+            edit: offers("edit.edit_text"),
+            copy: offers("edit.copy"),
+            link: offers("edit.link"),
+            redact: offers("redact.mark"),
+            recognize: offers("ocr.recognize"),
         }
     }
 
@@ -856,6 +857,27 @@ mod tests {
 
         assert!(!app.commit_typing_in(app.views[0].id));
         assert_eq!(app.views[0].line_editor, Some(ed), "the paragraph keeps its unsaved text");
+    }
+
+    #[test]
+    fn offers_follow_the_profile_published_last() {
+        use crate::features::Feature;
+        let ctx = egui::Context::default();
+        assert_eq!(Offers::get(&ctx), Offers::ALL, "nothing published: everything, as before");
+        Offers::publish(&ctx, &crate::profile::UiProfile::default());
+        assert_eq!(Offers::get(&ctx), Offers::ALL, "the default profile offers everything");
+        // Comments only: allows_id alone would keep a Needs::Nothing command of a feature that
+        // is off; Offers goes through panels::offers, which checks the feature too.
+        let comments = crate::profile::UiProfile { comments_only: true, ..Default::default() };
+        Offers::publish(&ctx, &comments);
+        let offers = Offers::get(&ctx);
+        assert!(!offers.edit && !offers.redact, "{offers:?}");
+        assert!(offers.copy, "copying isn't an edit");
+        let mut set = crate::features::FeatureSet::all();
+        set.remove(Feature::Copy);
+        Offers::publish(&ctx, &crate::profile::UiProfile { features: Some(set), ..Default::default() });
+        assert!(!Offers::get(&ctx).copy);
+        assert!(Offers::get(&ctx).edit);
     }
 
     #[test]

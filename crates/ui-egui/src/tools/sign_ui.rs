@@ -285,6 +285,12 @@ fn entry_unusable(u: &sign::windows::Unusable) -> DigitalIdEntry {
     }
 }
 
+/// Whether `profile` lets a document open in a tab of its own (a revision, a signed version):
+/// the app feature, and a tab strip to see and switch to it.
+pub(crate) fn opens_tabs(profile: &crate::profile::UiProfile) -> bool {
+    profile.allows_feature(Feature::App) && profile.shows_part(crate::profile::parts::TABS)
+}
+
 impl PdfCraftApp {
     /// Export certificate: write `c` as PEM into a chosen folder, named after its subject.
     pub(crate) fn export_certificate(&mut self, c: &Certificate) {
@@ -592,8 +598,8 @@ impl PdfCraftApp {
     /// Open saved revision `n` (1 = the oldest) of the active document as a new document.
     /// A repeat reuses the tab: every click used to open another identical one.
     pub fn open_revision(&mut self, n: usize) {
-        // A new document tab: an app feature.
-        if !self.profile.allows_feature(Feature::App) {
+        // A new document tab: an app feature, with the tab strip.
+        if !opens_tabs(&self.profile) {
             return;
         }
         let Some((_, id)) = self.active_ids() else { return };
@@ -652,7 +658,7 @@ impl PdfCraftApp {
     /// Open the signed version of a signature as a new document (View signed version).
     /// A repeat reuses the tab: every click used to open another identical one.
     pub fn view_signed_version(&mut self, len: usize, revision: usize) {
-        if !self.profile.allows_feature(Feature::App) {
+        if !opens_tabs(&self.profile) {
             return;
         }
         let Some((_, id)) = self.active_ids() else { return };

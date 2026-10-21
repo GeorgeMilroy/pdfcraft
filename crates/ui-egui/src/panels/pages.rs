@@ -98,6 +98,10 @@ pub(super) fn thumbnail_size(ui: &mut egui::Ui, t: &Tokens, view: &mut crate::Do
 /// is left out.
 pub(super) fn pages(ui: &mut egui::Ui, t: &Tokens, info: &DocInfo, view: &mut crate::DocView, modal: bool, editable: bool, nav: &mut Option<Nav>) {
     let profile = &*crate::dialogs::frame_profile(ui.ctx());
+    // The page menu's items the profile offers; with none, the menu doesn't open.
+    let [extract, split, replace, cut, copy, paste, delete] =
+        ["page.extract", "page.split", "page.replace", "page.cut", "page.copy", "page.paste", "page.delete"].map(|id| offers(profile, id));
+    let menu = extract || split || replace || cut || copy || paste || delete;
     // Escape drops the selection while the pointer is over the panel and nothing else wants the key.
     if !modal
         && !view.selected.is_empty()
@@ -188,47 +192,55 @@ pub(super) fn pages(ui: &mut egui::Ui, t: &Tokens, info: &DocInfo, view: &mut cr
                     *nav = Some(Nav::Page(i));
                 }
             }
-            resp.context_menu(|ui| {
-                // A page outside the selection becomes the selection, as in the organize grid.
-                if !view.target_pages().contains(&i) {
-                    view.click_page(i, egui::Modifiers::NONE, true);
-                }
-                if offers(profile, "page.extract") && ui.button(tl!("Extract pages")).clicked() {
-                    view.pending_action = Some(crate::canvas::ViewAction::Extract);
-                    ui.close();
-                }
-                if offers(profile, "page.split") && ui.button(tl!("Split document…")).clicked() {
-                    if view.selected.is_empty() {
-                        view.select_pages(&[i]);
+            if menu {
+                resp.context_menu(|ui| {
+                    // A page outside the selection becomes the selection, as in the organize grid.
+                    if !view.target_pages().contains(&i) {
+                        view.click_page(i, egui::Modifiers::NONE, true);
                     }
-                    view.pending_action = Some(crate::canvas::ViewAction::SplitBeforeSelected);
-                    ui.close();
-                }
-                if offers(profile, "page.replace") && ui.add_enabled(editable, egui::Button::new(tl!("Replace pages…"))).clicked() {
-                    view.pending_action = Some(crate::canvas::ViewAction::ReplacePages);
-                    ui.close();
-                }
-                ui.separator();
-                if offers(profile, "page.cut") && ui.add_enabled(editable, egui::Button::new(tl!("Cut"))).clicked() {
-                    view.pending_action = Some(crate::canvas::ViewAction::CopyPages { cut: true });
-                    ui.close();
-                }
-                if offers(profile, "page.copy") && ui.button(tl!("Copy")).clicked() {
-                    view.pending_action = Some(crate::canvas::ViewAction::CopyPages { cut: false });
-                    ui.close();
-                }
-                if offers(profile, "page.paste") && ui.add_enabled(editable, egui::Button::new(tl!("Paste after"))).clicked() {
-                    view.pending_action = Some(crate::canvas::ViewAction::PastePages);
-                    ui.close();
-                }
-                ui.separator();
-                let some_left = view.target_pages().len() < count;
-                // Never every page: a document keeps at least one.
-                if offers(profile, "page.delete") && ui.add_enabled(editable && some_left, egui::Button::new(tl!("Delete pages"))).clicked() {
-                    delete_pages(view, count);
-                    ui.close();
-                }
-            });
+                    if extract && ui.button(tl!("Extract pages")).clicked() {
+                        view.pending_action = Some(crate::canvas::ViewAction::Extract);
+                        ui.close();
+                    }
+                    if split && ui.button(tl!("Split document…")).clicked() {
+                        if view.selected.is_empty() {
+                            view.select_pages(&[i]);
+                        }
+                        view.pending_action = Some(crate::canvas::ViewAction::SplitBeforeSelected);
+                        ui.close();
+                    }
+                    if replace && ui.add_enabled(editable, egui::Button::new(tl!("Replace pages…"))).clicked() {
+                        view.pending_action = Some(crate::canvas::ViewAction::ReplacePages);
+                        ui.close();
+                    }
+                    // A separator only between groups that both have items.
+                    let clipboard = cut || copy || paste;
+                    if (extract || split || replace) && (clipboard || delete) {
+                        ui.separator();
+                    }
+                    if cut && ui.add_enabled(editable, egui::Button::new(tl!("Cut"))).clicked() {
+                        view.pending_action = Some(crate::canvas::ViewAction::CopyPages { cut: true });
+                        ui.close();
+                    }
+                    if copy && ui.button(tl!("Copy")).clicked() {
+                        view.pending_action = Some(crate::canvas::ViewAction::CopyPages { cut: false });
+                        ui.close();
+                    }
+                    if paste && ui.add_enabled(editable, egui::Button::new(tl!("Paste after"))).clicked() {
+                        view.pending_action = Some(crate::canvas::ViewAction::PastePages);
+                        ui.close();
+                    }
+                    if clipboard && delete {
+                        ui.separator();
+                    }
+                    let some_left = view.target_pages().len() < count;
+                    // Never every page: a document keeps at least one.
+                    if delete && ui.add_enabled(editable && some_left, egui::Button::new(tl!("Delete pages"))).clicked() {
+                        delete_pages(view, count);
+                        ui.close();
+                    }
+                });
+            }
         });
         ui.add_space(4.0);
     }

@@ -208,8 +208,8 @@ fn tool_detail(app: &mut PdfCraftApp, ui: &mut egui::Ui, t: &Tokens, g: &'static
         ui.add_space(6.0);
     }
     let mut run = None;
-    // Redact a PDF has Acrobat's footer: Clear all / Redact all.
-    let footer = g.id == "redact";
+    // Redact a PDF has Acrobat's footer: Clear all / Redact all, while either is offered.
+    let footer = g.id == "redact" && (offers(&app.profile, "redact.apply") || offers(&app.profile, "redact.clear"));
     let marks = if footer { app.active_ids().and_then(|(_, id)| app.session.get(id)).map_or(0, |d| d.redaction_marks()) } else { 0 };
     let list_h = if footer { (ui.available_height() - 52.0).max(80.0) } else { ui.available_height() };
     egui::ScrollArea::vertical().auto_shrink([false, false]).max_height(list_h).show(ui, |ui| {

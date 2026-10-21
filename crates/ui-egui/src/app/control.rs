@@ -62,6 +62,9 @@ impl PdfCraftApp {
             }
             ("mode", _) => {
                 let mode = Mode::parse(value).unwrap_or(Mode::AllTools);
+                if !self.allows_mode(mode) {
+                    return Err(format!("the profile doesn't allow the {value} mode"));
+                }
                 self.mode_override = Some(mode);
                 self.mode = mode;
                 // As switch_mode: another workspace puts the expanded All tools view away.
@@ -88,15 +91,7 @@ impl PdfCraftApp {
                 self.all_tools_full = false;
             }
             ("dialog", _) => {
-                let wanted = match value {
-                    "sign" | "certify" => Some(Dialog::Sign),
-                    "number-pages" => Some(Dialog::NumberPages),
-                    _ => None,
-                };
-                if wanted.and_then(Dialog::command).is_some_and(|id| !self.profile.allows_id(id)) {
-                    return Err(format!("the profile doesn't allow the {value} dialog"));
-                }
-                self.dialog = match value {
+                let candidate = match value {
                     "properties" => Some(Dialog::Properties(PropsTab::Description)),
                     "security" => Some(Dialog::Properties(PropsTab::Security)),
                     "fonts" => Some(Dialog::Properties(PropsTab::Fonts)),
@@ -124,29 +119,40 @@ impl PdfCraftApp {
                     "pdfa" => Some(Dialog::PdfA),
                     "signature" => Some(Dialog::Signature),
                     "optimize" => Some(Dialog::Optimize),
-                    "sign" | "certify" => {
-                        // Sign with a Digital ID for an invisible signature on the current page.
-                        let page = self.active.map_or(0, |i| self.views[i].current);
-                        self.start_signing(page, None, None, (value == "certify").then_some(2));
-                        Some(Dialog::Sign)
-                    }
-                    "number-pages" => {
-                        // Same path as the menu, so the page range is seeded.
-                        self.execute("page.number");
-                        Some(Dialog::NumberPages)
-                    }
-                    "page-properties" => {
-                        // Same path as the panel, so the selected pages and their order are seeded.
-                        self.execute("page.properties");
-                        self.dialog
-                    }
+                    "sign" | "certify" => Some(Dialog::Sign),
+                    "number-pages" => Some(Dialog::NumberPages),
+                    "page-properties" => Some(Dialog::PageProps),
                     "none" => None,
                     _ => Some(Dialog::About),
                 };
-                if self.dialog.and_then(Dialog::command).is_some_and(|id| !self.profile.allows_id(id)) {
-                    self.dialog = None;
+                // A refusal leaves everything as it was: checked before anything happens.
+                let refused = match value {
+                    "sign" => !self.profile.allows_id("sign.digital"),
+                    "certify" => !self.profile.allows_id("sign.certify"),
+                    _ => candidate.is_some_and(|d| !self.allows_dialog(d)),
+                };
+                if refused {
                     return Err(format!("the profile doesn't allow the {value} dialog"));
                 }
+                match value {
+                    "sign" | "certify" => {
+                        // Sign with a Digital ID for an invisible signature on the current page.
+                        let page = self.active.and_then(|i| self.views.get(i)).map_or(0, |v| v.current);
+                        self.start_signing(page, None, None, (value == "certify").then_some(2));
+                    }
+                    // Same path as the menu, so the page range is seeded.
+                    "number-pages" => {
+                        self.execute("page.number");
+                    }
+                    // Same path as the panel, so the selected pages and their order are seeded;
+                    // the dialog is the one that opened, if any.
+                    "page-properties" => {
+                        self.execute("page.properties");
+                        return Ok(());
+                    }
+                    _ => {}
+                }
+                self.dialog = candidate;
             }
             ("tools", _) if value == "full" => self.expand_all_tools(),
             ("tools", _) => {
