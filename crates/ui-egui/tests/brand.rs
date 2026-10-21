@@ -18,6 +18,7 @@ fn acme() -> Brand {
         about_text: Some("Acme's viewer. Based on PdfCraft.".into()),
         about_url: None,
         community_links: false,
+        credits: false,
         storage_key: "acme".into(),
     }
 }
@@ -55,6 +56,10 @@ fn a_custom_brand_names_the_app_everywhere_and_drops_the_marks() {
     assert!(h.query_by_label("Version 9.9.9").is_some());
     assert!(h.query_by_label("Acme's viewer. Based on PdfCraft.").is_some(), "the brand's About text, kept as written");
     assert!(h.query_by_label("Part of").is_none());
+    // Without the credits, About has no Contributors or Models tab.
+    for tab in ["Contributors", "Models"] {
+        assert!(h.query_by_label(tab).is_none(), "About shows the {tab} tab");
+    }
     no_trademarks(&h, "about");
 
     // Translated strings are renamed too.
