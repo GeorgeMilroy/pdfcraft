@@ -222,8 +222,8 @@ fn tool_detail(app: &mut PdfCraftApp, ui: &mut egui::Ui, t: &Tokens, g: &'static
         ui.add_space(6.0);
     }
     let mut run = None;
-    // Redact a PDF has Acrobat's footer: Clear all / Redact all.
-    let footer = g.id == "redact";
+    // Redact a PDF has Acrobat's footer: Clear all / Redact all, while either is offered.
+    let footer = g.id == "redact" && (offers(&app.profile, "redact.apply") || offers(&app.profile, "redact.clear"));
     let marks = if footer { app.active_ids().and_then(|(_, id)| app.session.get(id)).map_or(0, |d| d.redaction_marks()) } else { 0 };
     let list_h = if footer { (ui.available_height() - 52.0).max(80.0) } else { ui.available_height() };
     egui::ScrollArea::vertical().auto_shrink([false, false]).max_height(list_h).show(ui, |ui| {
@@ -559,6 +559,10 @@ fn stamp_palette(app: &mut PdfCraftApp, ui: &mut egui::Ui, t: &Tokens) {
 /// Edit a PDF ▸ Format text: for the selected added text (one undoable change), or the style
 /// new text gets.
 fn format_section(app: &mut PdfCraftApp, ui: &mut egui::Ui, t: &Tokens) {
+    // Formatting, the font pickers and the image panel edit page content.
+    if !offers(&app.profile, "edit.edit_text") {
+        return;
+    }
     // Editing a paragraph of existing text: its formatting, applied as it changes.
     if let Some((i, _)) = app.active_ids()
         && let Some(ed) = app.views[i].line_editor.clone()
@@ -1259,6 +1263,10 @@ fn pages(
     profile: &UiProfile,
     nav: &mut Option<Nav>,
 ) {
+    // The page menu's items the profile offers; with none, the menu doesn't open.
+    let [extract, replace, cut, copy, paste, delete] =
+        ["page.extract", "page.replace", "page.cut", "page.copy", "page.paste", "page.delete"].map(|id| offers(profile, id));
+    let menu = extract || replace || cut || copy || paste || delete;
     // Escape drops the selection while the pointer is over the panel and nothing else wants the key.
     if !modal
         && !view.selected.is_empty()
@@ -1347,40 +1355,48 @@ fn pages(
                     *nav = Some(Nav::Page(i));
                 }
             }
-            resp.context_menu(|ui| {
-                // A page outside the selection becomes the selection, as in the organize grid.
-                if !view.target_pages().contains(&i) {
-                    view.click_page(i, egui::Modifiers::NONE, true);
-                }
-                if offers(profile, "page.extract") && ui.button(tl!("Extract pages")).clicked() {
-                    view.pending_action = Some(crate::canvas::ViewAction::Extract);
-                    ui.close();
-                }
-                if offers(profile, "page.replace") && ui.add_enabled(editable, egui::Button::new(tl!("Replace pages…"))).clicked() {
-                    view.pending_action = Some(crate::canvas::ViewAction::ReplacePages);
-                    ui.close();
-                }
-                ui.separator();
-                if offers(profile, "page.cut") && ui.add_enabled(editable, egui::Button::new(tl!("Cut"))).clicked() {
-                    view.pending_action = Some(crate::canvas::ViewAction::CopyPages { cut: true });
-                    ui.close();
-                }
-                if offers(profile, "page.copy") && ui.button(tl!("Copy")).clicked() {
-                    view.pending_action = Some(crate::canvas::ViewAction::CopyPages { cut: false });
-                    ui.close();
-                }
-                if offers(profile, "page.paste") && ui.add_enabled(editable, egui::Button::new(tl!("Paste after"))).clicked() {
-                    view.pending_action = Some(crate::canvas::ViewAction::PastePages);
-                    ui.close();
-                }
-                ui.separator();
-                let some_left = view.target_pages().len() < count;
-                // Never every page: a document keeps at least one.
-                if offers(profile, "page.delete") && ui.add_enabled(editable && some_left, egui::Button::new(tl!("Delete pages"))).clicked() {
-                    delete_pages(view, count);
-                    ui.close();
-                }
-            });
+            if menu {
+                resp.context_menu(|ui| {
+                    // A page outside the selection becomes the selection, as in the organize grid.
+                    if !view.target_pages().contains(&i) {
+                        view.click_page(i, egui::Modifiers::NONE, true);
+                    }
+                    if extract && ui.button(tl!("Extract pages")).clicked() {
+                        view.pending_action = Some(crate::canvas::ViewAction::Extract);
+                        ui.close();
+                    }
+                    if replace && ui.add_enabled(editable, egui::Button::new(tl!("Replace pages…"))).clicked() {
+                        view.pending_action = Some(crate::canvas::ViewAction::ReplacePages);
+                        ui.close();
+                    }
+                    // A separator only between groups that both have items.
+                    let clipboard = cut || copy || paste;
+                    if (extract || replace) && (clipboard || delete) {
+                        ui.separator();
+                    }
+                    if cut && ui.add_enabled(editable, egui::Button::new(tl!("Cut"))).clicked() {
+                        view.pending_action = Some(crate::canvas::ViewAction::CopyPages { cut: true });
+                        ui.close();
+                    }
+                    if copy && ui.button(tl!("Copy")).clicked() {
+                        view.pending_action = Some(crate::canvas::ViewAction::CopyPages { cut: false });
+                        ui.close();
+                    }
+                    if paste && ui.add_enabled(editable, egui::Button::new(tl!("Paste after"))).clicked() {
+                        view.pending_action = Some(crate::canvas::ViewAction::PastePages);
+                        ui.close();
+                    }
+                    if clipboard && delete {
+                        ui.separator();
+                    }
+                    let some_left = view.target_pages().len() < count;
+                    // Never every page: a document keeps at least one.
+                    if delete && ui.add_enabled(editable && some_left, egui::Button::new(tl!("Delete pages"))).clicked() {
+                        delete_pages(view, count);
+                        ui.close();
+                    }
+                });
+            }
         });
         ui.add_space(4.0);
     }

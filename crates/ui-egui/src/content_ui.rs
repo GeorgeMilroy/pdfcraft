@@ -657,7 +657,7 @@ impl crate::PdfCraftApp {
 
     /// Edit text & images ▸ Replace Image: pick a file to draw in a page image's place.
     pub(crate) fn replace_page_image_dialog(&mut self, page: usize, index: usize) {
-        if !self.profile.allows_id("edit.edit_text") {
+        if !self.offers_or_refuses("edit.edit_text") {
             return;
         }
         #[cfg(not(target_arch = "wasm32"))]
@@ -745,7 +745,7 @@ impl crate::PdfCraftApp {
     /// Redact image: a redaction mark over the whole picture. It is applied, like any mark, from
     /// Redact a PDF.
     pub(crate) fn redact_page_image(&mut self, page: usize, index: usize) {
-        if !self.profile.allows_id("redact.mark") {
+        if !self.offers_or_refuses("redact.mark") {
             return;
         }
         let Some(rect) = self.page_image_box(page, index) else { return };
@@ -758,7 +758,7 @@ impl crate::PdfCraftApp {
 
     /// Create link: the link properties for a new link over the picture.
     pub(crate) fn link_page_image(&mut self, page: usize, index: usize) {
-        if !self.profile.allows_id("edit.link") {
+        if !self.offers_or_refuses("edit.link") {
             return;
         }
         if let Some(rect) = self.page_image_box(page, index) {
@@ -766,13 +766,26 @@ impl crate::PdfCraftApp {
         }
     }
 
-    /// Recognize text: the Recognize Text dialog, set to this page (through its command, so
-    /// the profile and the document decide as they do for the menu's).
+    /// Recognize text: the Recognize Text dialog, set to this page, unless the profile refuses
+    /// it.
     pub fn recognize_text_on_page(&mut self, page: usize) {
+        if !self.offers_or_refuses("ocr.recognize") {
+            return;
+        }
         self.ocr_draft.pages = crate::ocr_ui::OcrPages::Range;
         self.ocr_draft.from = page + 1;
         self.ocr_draft.to = page + 1;
-        self.execute("ocr.recognize");
+        self.dialog = Some(crate::Dialog::RecognizeText);
+    }
+
+    /// Whether the profile offers command `id` ([`crate::panels::offers`]); if not, the user is
+    /// told it isn't allowed.
+    fn offers_or_refuses(&mut self, id: &str) -> bool {
+        let offered = crate::panels::offers(&self.profile, id);
+        if !offered {
+            self.notify(tl!("Not allowed"));
+        }
+        offered
     }
 
     /// Click an image field: pick a picture for it.
@@ -790,7 +803,7 @@ impl crate::PdfCraftApp {
 
     /// Edit image ▸ Replace: pick a file for the selected image.
     pub fn replace_image_dialog(&mut self, page: usize, index: usize) {
-        if !self.profile.allows_id("edit.edit_text") {
+        if !self.offers_or_refuses("edit.edit_text") {
             return;
         }
         #[cfg(not(target_arch = "wasm32"))]

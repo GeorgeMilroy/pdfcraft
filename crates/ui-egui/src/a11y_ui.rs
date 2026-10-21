@@ -202,7 +202,7 @@ pub(crate) fn panel(ui: &mut egui::Ui, t: &Tokens, state: &mut A11yState, doc: D
             .color(t.text_muted),
         );
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            if widgets::pill_button(ui, tl!("Check again"), false).clicked() {
+            if check && widgets::pill_button(ui, tl!("Check again"), false).clicked() {
                 action = Some(PanelAction::CheckAgain);
             }
             if report_file && widgets::pill_button(ui, tl!("Report"), false).on_hover_text(tl!("Show the accessibility report")).clicked() {
@@ -306,8 +306,10 @@ pub(crate) fn panel(ui: &mut egui::Ui, t: &Tokens, state: &mut A11yState, doc: D
                     state.explain = if state.explain == Some(r.rule) { None } else { Some(r.rule) };
                     ui.close();
                 }
-                ui.separator();
-                if ui.button(tl!("Check Again")).clicked() {
+                if check || report_file {
+                    ui.separator();
+                }
+                if check && ui.button(tl!("Check Again")).clicked() {
                     action = Some(PanelAction::CheckAgain);
                     ui.close();
                 }
@@ -461,7 +463,8 @@ impl PdfCraftApp {
 
     pub(crate) fn a11y_action(&mut self, index: usize, action: PanelAction) {
         match action {
-            PanelAction::CheckAgain => self.run_accessibility_check(),
+            PanelAction::CheckAgain if self.profile.allows_id("a11y.check") => self.run_accessibility_check(),
+            PanelAction::CheckAgain => {}
             PanelAction::Options if self.profile.allows_id("a11y.check") => self.dialog = Some(Dialog::AccessibilityOptions),
             PanelAction::Options => {}
             PanelAction::ShowReport => self.show_accessibility_report(),

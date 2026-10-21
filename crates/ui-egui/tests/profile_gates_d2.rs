@@ -211,3 +211,29 @@ fn bookmark_editing_needs_the_bookmarks_feature() {
         assert_eq!(h.query_all_by_label_contains("New bookmark").count() > 0, shown);
     }
 }
+
+#[test]
+fn the_pages_panel_menu_does_not_open_when_it_has_nothing_to_offer() {
+    for (profile, opens) in [(UiProfile::default(), true), (comments(), false)] {
+        let mut h = harness(profile);
+        h.state_mut().choose_right_panel(Some(RightPanel::Pages));
+        h.run_steps(3);
+        right_click(&mut h, "Page 2");
+        // Opening the menu makes the page under it the selection.
+        assert_eq!(h.state().views[0].selected.contains(&1), opens, "the selection changed although no menu opened");
+    }
+}
+
+#[test]
+fn the_redact_footer_goes_when_both_its_buttons_are_refused_at_runtime() {
+    let mut h = harness(UiProfile::default());
+    h.state_mut().left = LeftPanel::Tool("redact");
+    h.run_steps(2);
+    assert!(shows(&h, "Clear all") && shows(&h, "Redact all"));
+    let mut both = UiProfile::default();
+    both.hidden.extend(["redact.apply".to_string(), "redact.clear".to_string()]);
+    h.state_mut().set_profile(both);
+    h.run_steps(2);
+    assert_eq!(h.state().left, LeftPanel::Tool("redact"), "marking is still allowed");
+    assert!(!shows(&h, "Clear all") && !shows(&h, "Redact all"));
+}
