@@ -3148,7 +3148,7 @@ pub fn document_area(app: &mut PdfCraftApp, index: usize, ui: &mut egui::Ui) {
         (offers("edit.copy"), offers("edit.column_select"), offers("edit.link"), offers("edit.remove_links"));
     let fields_on = crate::forms_ui::FieldOffers {
         fill: app.profile.allows_feature(crate::features::Feature::FormFill),
-        sign: app.profile.allows_feature(crate::features::Feature::DigitalSignatures),
+        sign: app.profile.allows_id("sign.digital"),
     };
     let field_props_on = offers("form.field.properties");
     let can_crop = doc.allows_assembly();
@@ -5110,7 +5110,7 @@ fn notices(
         if scripts_off && profile.allows_id("tools.js_console") && crate::widgets::pill_button(ui, tl!("JavaScript Console"), false).clicked() {
             open_console = true;
         }
-        if secured && profile.allows_id("file.properties") && crate::widgets::pill_button(ui, tl!("Security settings"), false).clicked() {
+        if secured && profile.allows_id("protect.properties") && crate::widgets::pill_button(ui, tl!("Security settings"), false).clicked() {
             open_security = true;
         }
         if secured && doc.can_unlock() && profile.allows_id("protect.unlock") && crate::widgets::pill_button(ui, tl!("Unlock…"), true).clicked() {
