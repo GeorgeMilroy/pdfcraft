@@ -46,6 +46,21 @@ fn permissions(panel: &Panel) -> Permissions {
     if *panel == Panel::Canvas { Permissions::PROTECTED } else { Permissions::default() }
 }
 
+/// Whether a docking command (an `action`, or an `operation` on a panel) only does what a
+/// locked layout allows.
+fn locked_command_allowed(params: &Value) -> bool {
+    match params.get("action") {
+        Some(action) => serde_json::from_value::<Action<Panel>>(action.clone()).is_ok_and(|action| allowed_when_locked(&action)),
+        None => matches!(params.get("operation").and_then(Value::as_str), Some("open" | "activate" | "setStackOpen" | "resizeStack" | "resizeSplit")),
+    }
+}
+
+/// What a locked layout ([`crate::profile::UiProfile::lock_layout`]) still lets the user do:
+/// pick a tab, open or close a stack entry, and resize.
+fn allowed_when_locked(action: &Action<Panel>) -> bool {
+    matches!(action, Action::Activate { .. } | Action::SetStackOpen { .. } | Action::ResizeSplit { .. } | Action::ResizeStack { .. })
+}
+
 fn tabs(panel: Panel) -> Node<Panel> {
     Node::Tabs { panels: vec![panel], active: 0 }
 }
@@ -295,7 +310,7 @@ impl Workspace {
 }
 
 fn sync(workspace: &mut Workspace, app: &crate::PdfCraftApp) -> Result<(), String> {
-    workspace.set_visible(Panel::Tools, app.left_open)?;
+    workspace.set_visible(Panel::Tools, app.left_open && app.profile.shows_part(crate::profile::parts::TOOLS_PANEL))?;
     workspace.set_visible(Panel::Inspector, app.right.is_some())
 }
 
@@ -308,17 +323,27 @@ fn drain_reveals(workspace: &mut Workspace, app: &mut crate::PdfCraftApp) {
 }
 
 fn publish_visibility(app: &mut crate::PdfCraftApp, workspace: &Workspace) {
-    app.left_open = workspace.layout.contains(&Panel::Tools);
+    // A Tools panel the profile hides keeps its open state for when it shows again.
+    if app.profile.shows_part(crate::profile::parts::TOOLS_PANEL) {
+        app.left_open = workspace.layout.contains(&Panel::Tools);
+    }
     if !workspace.layout.contains(&Panel::Inspector) {
         if app.right.is_some() {
             app.choose_right_panel(None);
         }
     } else if app.right.is_none() {
-        app.choose_right_panel(Some(crate::RightPanel::Comments));
+        // Comments, or the first panel the profile shows.
+        use crate::RightPanel::*;
+        let first =
+            [Comments, Bookmarks, Pages, Fields, Layers, Attachments, Signatures, Tags, Search].into_iter().find(|p| app.profile.shows_panel(*p));
+        app.choose_right_panel(first);
     }
 }
 
 pub fn command(app: &mut crate::PdfCraftApp, reset: bool, params: &Value) -> Result<Value, String> {
+    if app.profile.lock_layout && (reset || !locked_command_allowed(params)) {
+        return Err("The panel layout is locked".into());
+    }
     let mut workspace = app.docking.clone();
     if reset {
         workspace = Workspace::default();
@@ -391,6 +416,7 @@ pub fn show(app: &mut crate::PdfCraftApp, ui: &mut egui::Ui) {
     style.accent = t.accent;
     style.font = crate::theme::medium(12.0);
     drain_reveals(&mut workspace, app);
+    let lock = app.profile.lock_layout;
     let mut rendered = workspace.layout.clone();
     if app.active.is_none() && rendered.contains(&Panel::Inspector) {
         // Availability is a render projection: the saved group, selection and width survive Home.
@@ -401,13 +427,14 @@ pub fn show(app: &mut crate::PdfCraftApp, ui: &mut egui::Ui) {
         &rendered,
         &style,
         |panel| crate::i18n::t(panel.label()).into(),
-        permissions,
+        |panel| if lock { Permissions::PROTECTED } else { permissions(panel) },
         panel_limits,
         |ui, panel| match panel {
             Panel::Canvas => {
                 ui.painter().rect_filled(ui.max_rect(), 0.0, t.pasteboard);
                 match app.active {
                     None if app.combine_showing() => crate::combine_ui::page(app, ui),
+                    None if app.profile.hides(crate::profile::parts::HOME) => {}
                     None => crate::home::show(app, ui),
                     Some(index) => match crate::compare_ui::side_by_side(app, index) {
                         Some((old, new)) => crate::compare_ui::compare_area(app, old, new, ui),
@@ -427,6 +454,9 @@ pub fn show(app: &mut crate::PdfCraftApp, ui: &mut egui::Ui) {
     publish_visibility(app, &workspace);
     app.docking = workspace;
     for mut action in output.actions {
+        if lock && !allowed_when_locked(&action) {
+            continue;
+        }
         if app.active.is_none()
             && let Action::ResizeSplit { path, .. } = &mut action
         {
