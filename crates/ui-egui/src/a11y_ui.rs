@@ -9,6 +9,7 @@ use pdfcraft_cos::ObjRef;
 use pdfcraft_engine::DocId;
 use pdfcraft_engine::a11y::{Category, Options, Report, Rule, Status};
 
+use crate::features::Feature;
 use crate::theme::{self, Tokens};
 use crate::{Dialog, PdfCraftApp, PropsTab, RightPanel, icons, widgets};
 
@@ -87,9 +88,12 @@ pub(crate) fn options_body(ui: &mut egui::Ui, app: &mut PdfCraftApp, t: &Tokens)
         });
         ui.add_space(8.0);
     };
-    group(ui, "Report Options", &mut |ui| {
-        ui.add(widgets::checkbox(&mut o.create_report, tl!("Create accessibility report")));
-    });
+    // The report is a file written next to the document: a copy the profile may refuse.
+    if app.profile.allows_feature(Feature::Download) {
+        group(ui, "Report Options", &mut |ui| {
+            ui.add(widgets::checkbox(&mut o.create_report, tl!("Create accessibility report")));
+        });
+    }
     group(ui, "Page Range", &mut |ui| {
         ui.horizontal(|ui| {
             widgets::radio_value(ui, &mut o.all_pages, true, tl!("All pages in document"));
@@ -162,6 +166,10 @@ fn status_icon(t: &Tokens, s: Status) -> (&'static str, egui::Color32) {
 /// The Accessibility Checker panel.
 pub(crate) fn panel(ui: &mut egui::Ui, t: &Tokens, state: &mut A11yState, doc: DocId) -> Option<PanelAction> {
     let mut action = None;
+    // Checking is a11y.check; the report writes a file; fixes change the document.
+    let profile = crate::dialogs::frame_profile(ui.ctx());
+    let (check, report_file, fix) =
+        (profile.allows_id("a11y.check"), profile.allows_feature(Feature::Download), profile.allows_feature(Feature::Accessibility));
     let Some((_, report)) = state.report.as_ref().filter(|(d, _)| *d == doc) else {
         ui.add_space(24.0);
         ui.vertical_centered(|ui| {
@@ -169,7 +177,7 @@ pub(crate) fn panel(ui: &mut egui::Ui, t: &Tokens, state: &mut A11yState, doc: D
             ui.add_space(6.0);
             ui.label(egui::RichText::new(tl!("This document hasn't been checked yet.")).color(t.text_muted));
             ui.add_space(6.0);
-            if widgets::pill_button(ui, tl!("Check for accessibility"), true).clicked() {
+            if check && widgets::pill_button(ui, tl!("Check for accessibility"), true).clicked() {
                 action = Some(PanelAction::Options);
             }
         });
@@ -197,7 +205,7 @@ pub(crate) fn panel(ui: &mut egui::Ui, t: &Tokens, state: &mut A11yState, doc: D
             if widgets::pill_button(ui, tl!("Check again"), false).clicked() {
                 action = Some(PanelAction::CheckAgain);
             }
-            if widgets::pill_button(ui, tl!("Report"), false).on_hover_text(tl!("Show the accessibility report")).clicked() {
+            if report_file && widgets::pill_button(ui, tl!("Report"), false).on_hover_text(tl!("Show the accessibility report")).clicked() {
                 action = Some(PanelAction::ShowReport);
             }
         });
@@ -286,7 +294,7 @@ pub(crate) fn panel(ui: &mut egui::Ui, t: &Tokens, state: &mut A11yState, doc: D
             }
             row.context_menu(|ui| {
                 ui.set_min_width(170.0);
-                if ui.add_enabled(fixable(r.rule) && r.status == Status::Failed, egui::Button::new(tl!("Fix"))).clicked() {
+                if fix && ui.add_enabled(fixable(r.rule) && r.status == Status::Failed, egui::Button::new(tl!("Fix"))).clicked() {
                     action = Some(PanelAction::Fix(r.rule));
                     ui.close();
                 }
@@ -303,7 +311,7 @@ pub(crate) fn panel(ui: &mut egui::Ui, t: &Tokens, state: &mut A11yState, doc: D
                     action = Some(PanelAction::CheckAgain);
                     ui.close();
                 }
-                if ui.button(tl!("Show Report")).clicked() {
+                if report_file && ui.button(tl!("Show Report")).clicked() {
                     action = Some(PanelAction::ShowReport);
                     ui.close();
                 }
@@ -422,6 +430,9 @@ impl PdfCraftApp {
 
     /// Save the accessibility report (HTML) for the last check, checking first if needed.
     pub fn show_accessibility_report(&mut self) {
+        if !self.profile.allows_feature(Feature::Download) {
+            return;
+        }
         let Some((_, id)) = self.active_ids() else { return };
         if !self.a11y.report.as_ref().is_some_and(|(d, _)| *d == id) {
             let create = std::mem::replace(&mut self.a11y_options.create_report, false);
@@ -451,7 +462,8 @@ impl PdfCraftApp {
     pub(crate) fn a11y_action(&mut self, index: usize, action: PanelAction) {
         match action {
             PanelAction::CheckAgain => self.run_accessibility_check(),
-            PanelAction::Options => self.dialog = Some(Dialog::AccessibilityOptions),
+            PanelAction::Options if self.profile.allows_id("a11y.check") => self.dialog = Some(Dialog::AccessibilityOptions),
+            PanelAction::Options => {}
             PanelAction::ShowReport => self.show_accessibility_report(),
             PanelAction::GoTo(p, bbox) => self.a11y_show_on_page(index, p, bbox),
             PanelAction::GoToTag(object, page, bbox) => {
@@ -481,6 +493,7 @@ impl PdfCraftApp {
                     }
                 }
             }
+            PanelAction::Fix(_) if !self.profile.allows_feature(Feature::Accessibility) => {}
             PanelAction::Fix(rule) => {
                 let Some((_, id)) = self.active_ids() else { return };
                 match rule {
@@ -561,6 +574,8 @@ fn figure_picture(ctx: &egui::Context, doc: &pdfcraft_engine::Document, f: &pdfc
 
 pub(crate) fn alt_body(ui: &mut egui::Ui, app: &mut PdfCraftApp, t: &Tokens) -> (bool, bool) {
     let ctx = ui.ctx().clone();
+    // Without accessibility fixes the figures' text only shows.
+    let fix = app.profile.allows_feature(Feature::Accessibility);
     let doc = app.alt_draft.doc.and_then(|id| app.session.get(id));
     let d = &mut app.alt_draft;
     ui.label(egui::RichText::new(tl!("Set Alternate Text")).font(theme::semibold(18.0)));
@@ -617,7 +632,7 @@ pub(crate) fn alt_body(ui: &mut egui::Ui, app: &mut PdfCraftApp, t: &Tokens) -> 
             d.index += 1;
         }
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            if widgets::pill_button(ui, tl!("Save & Close"), true).clicked() {
+            if fix && widgets::pill_button(ui, tl!("Save & Close"), true).clicked() {
                 save = true;
             }
             if widgets::pill_button(ui, tl!("Cancel"), false).clicked() {
@@ -654,6 +669,9 @@ impl PdfCraftApp {
     /// Save & Close: one undo step for every change.
     pub(crate) fn save_alt_text(&mut self) {
         let d = std::mem::take(&mut self.alt_draft);
+        if !self.profile.allows_feature(Feature::Accessibility) {
+            return;
+        }
         let mut edits = Vec::new();
         for (k, f) in d.figures.iter().enumerate() {
             if d.decorative[k] {

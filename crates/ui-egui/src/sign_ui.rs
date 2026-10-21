@@ -9,6 +9,7 @@ use pdfcraft_engine::sign::{self, Appearance, AppearanceLabels, Certificate, Dig
 use pdfcraft_engine::{SignOptions, SignatureImage, SignatureInfo, SignatureStatus};
 
 use crate::canvas::{DocView, PageXform, Snapshot, SnapshotKind};
+use crate::features::Feature;
 use crate::fill_sign::SavedSig;
 use crate::page_pointer::PagePointer;
 use crate::theme::{self, Tokens};
@@ -276,12 +277,19 @@ fn entry_unusable(u: &sign::windows::Unusable) -> DigitalIdEntry {
 impl PdfCraftApp {
     /// Export certificate: write `c` as PEM into a chosen folder, named after its subject.
     pub(crate) fn export_certificate(&mut self, c: &Certificate) {
+        if !self.profile.allows_feature(Feature::DigitalSignatures) {
+            return;
+        }
         let name = format!("{}.cer", crate::files::attachment_file_name(&c.display_name()));
         self.write_files(&[(name, std::sync::Arc::new(certificate_pem(c).into_bytes()))], "Export certificate");
     }
 
-    /// Start signing: the rectangle (or field) is known; show Sign with a Digital ID.
+    /// Start signing: the rectangle (or field) is known; show Sign with a Digital ID. Every way
+    /// into signing comes here, so a profile without digital signatures stops it here.
     pub fn start_signing(&mut self, page: usize, rect: Option<[f64; 4]>, field: Option<String>, certify: Option<u8>) {
+        if !self.profile.allows_feature(Feature::DigitalSignatures) {
+            return;
+        }
         self.refresh_os_key_store_ids();
         let mut draft = SignDraft::new(page, rect, field, certify, &self.digital_ids);
         draft.graphic = match &self.sign_graphic {
@@ -543,6 +551,9 @@ impl PdfCraftApp {
 
     /// Trust a certificate (Signatures panel ▸ Add to trusted certificates), revalidating.
     pub fn trust_certificate(&mut self, cert: Certificate) {
+        if !self.profile.allows_feature(Feature::DigitalSignatures) {
+            return;
+        }
         let mut certs = self.session.trusted_certificates().to_vec();
         if !certs.iter().any(|c| c.raw == cert.raw) {
             certs.push(cert);
@@ -570,6 +581,10 @@ impl PdfCraftApp {
     /// Open saved revision `n` (1 = the oldest) of the active document as a new document.
     /// A repeat reuses the tab: every click used to open another identical one.
     pub fn open_revision(&mut self, n: usize) {
+        // A new document tab: an app feature.
+        if !self.profile.allows_feature(Feature::App) {
+            return;
+        }
         let Some((_, id)) = self.active_ids() else { return };
         let Some(doc) = self.session.get(id) else { return };
         // The revision's byte range, as `Session::open_revision` reads it. An unknown `n`
@@ -626,6 +641,9 @@ impl PdfCraftApp {
     /// Open the signed version of a signature as a new document (View signed version).
     /// A repeat reuses the tab: every click used to open another identical one.
     pub fn view_signed_version(&mut self, len: usize, revision: usize) {
+        if !self.profile.allows_feature(Feature::App) {
+            return;
+        }
         let Some((_, id)) = self.active_ids() else { return };
         let Some(doc) = self.session.get(id) else { return };
         let end = len.min(doc.bytes.len());
@@ -656,6 +674,10 @@ impl PdfCraftApp {
 
 /// Draw the signing dialogs; returns `true` when the dialog should close.
 pub(crate) fn dialog(ui: &mut egui::Ui, app: &mut PdfCraftApp, t: &Tokens) -> bool {
+    // Managing digital IDs and signing are digital signatures, whatever opened the dialog.
+    if !app.profile.allows_feature(Feature::DigitalSignatures) {
+        return true;
+    }
     let Some(step) = app.sign_draft.as_ref().map(|d| d.step) else { return true };
     match step {
         SignStep::Choose => choose(ui, app, t),
@@ -1207,8 +1229,12 @@ pub enum PanelAction {
 /// The Signatures panel body.
 pub(crate) fn panel(ui: &mut egui::Ui, t: &Tokens, sigs: &[SignatureInfo], expanded: &mut Vec<String>) -> Option<PanelAction> {
     let mut action = None;
+    // Signing, trusting and exporting are digital signatures; viewing a version opens a tab.
+    let profile = crate::dialogs::frame_profile(ui.ctx());
+    let manage = profile.allows_feature(Feature::DigitalSignatures);
+    let open_files = profile.allows_feature(Feature::App);
     ui.horizontal(|ui| {
-        if widgets::pill_button(ui, tl!("Validate all"), false).clicked() {
+        if profile.allows_id("sign.validate") && widgets::pill_button(ui, tl!("Validate all"), false).clicked() {
             action = Some(PanelAction::Validate);
         }
     });
@@ -1257,7 +1283,7 @@ pub(crate) fn panel(ui: &mut egui::Ui, t: &Tokens, sigs: &[SignatureInfo], expan
         egui::Frame::NONE.inner_margin(egui::Margin { left: 44, right: 4, top: 2, bottom: 8 }).show(ui, |ui| {
             ui.spacing_mut().item_spacing.y = 3.0;
             if !s.signed {
-                if widgets::pill_button(ui, tl!("Sign this field…"), true).clicked() {
+                if manage && widgets::pill_button(ui, tl!("Sign this field…"), true).clicked() {
                     action = Some(PanelAction::Sign(s.field.clone()));
                 }
                 return;
@@ -1325,11 +1351,12 @@ pub(crate) fn panel(ui: &mut egui::Ui, t: &Tokens, sigs: &[SignatureInfo], expan
                 // the Certificate Viewer's Trust tab, which names that certificate.
                 if let Some(c) = s.certificate.as_ref()
                     && s.status == SignatureStatus::Unknown
+                    && manage
                     && ui.button(tl!("Add to trusted certificates")).clicked()
                 {
                     action = Some(PanelAction::Trust(Box::new(c.clone())));
                 }
-                if ui.button(tl!("View signed version")).clicked() {
+                if open_files && ui.button(tl!("View signed version")).clicked() {
                     action = Some(PanelAction::ViewSigned { len: s.signed_len, revision: s.revision });
                 }
                 if let Some(c) = &s.certificate
@@ -1340,6 +1367,7 @@ pub(crate) fn panel(ui: &mut egui::Ui, t: &Tokens, sigs: &[SignatureInfo], expan
                     action = Some(PanelAction::ViewCertificate(chain));
                 }
                 if let Some(c) = &s.certificate
+                    && manage
                     && ui.button(tl!("Export certificate…")).clicked()
                 {
                     action = Some(PanelAction::ExportCertificate(Box::new(c.clone())));
@@ -1392,7 +1420,9 @@ pub(crate) enum CertAction {
 }
 
 /// The Certificate Viewer dialog: the chain on the left, the selected certificate's tabs.
-pub(crate) fn cert_viewer(ui: &mut egui::Ui, v: &mut CertViewer, trusted: &[Certificate], t: &Tokens) -> (bool, Option<CertAction>) {
+/// The Certificate Viewer. Without `manage` (digital signatures) it only shows: no Add to
+/// Trusted Certificates, no Export.
+pub(crate) fn cert_viewer(ui: &mut egui::Ui, v: &mut CertViewer, trusted: &[Certificate], t: &Tokens, manage: bool) -> (bool, Option<CertAction>) {
     title(ui, "Certificate Viewer");
     ui.label(egui::RichText::new(tl!("This dialog shows the details of a certificate and its chain.")).color(t.text_muted));
     ui.add_space(8.0);
@@ -1472,13 +1502,13 @@ pub(crate) fn cert_viewer(ui: &mut egui::Ui, v: &mut CertViewer, trusted: &[Cert
                         tl!("This certificate is not trusted. Signatures made with it show an unknown identity.")
                     });
                     ui.add_space(8.0);
-                    if !is_trusted && widgets::pill_button(ui, tl!("Add to Trusted Certificates"), false).clicked() {
+                    if !is_trusted && manage && widgets::pill_button(ui, tl!("Add to Trusted Certificates"), false).clicked() {
                         action = Some(CertAction::Trust(Box::new(c.clone())));
                     }
                 }
             }
             ui.add_space(8.0);
-            if widgets::pill_button(ui, tl!("Export…"), false).clicked() {
+            if manage && widgets::pill_button(ui, tl!("Export…"), false).clicked() {
                 action = Some(CertAction::Export(Box::new(c.clone())));
             }
         });

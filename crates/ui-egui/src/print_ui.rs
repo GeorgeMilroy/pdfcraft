@@ -363,7 +363,12 @@ impl Drop for WakeOnExit {
 }
 
 impl PdfCraftApp {
+    /// Open the Print dialog (File ▸ Print, or a script's `print()`), when the profile allows
+    /// printing.
     pub fn open_print(&mut self) {
+        if !self.profile.allows_feature(crate::features::Feature::Print) {
+            return;
+        }
         let Some((i, _)) = self.active_ids() else { return };
         let (printers, printers_loading) = match self.printer_source.clone() {
             // The list from the last time the dialog opened, until the fresh one arrives.
@@ -619,6 +624,9 @@ impl PdfCraftApp {
     /// a preset path returns `true` once the save picker is showing; the file is written on a
     /// later frame, when the user has chosen where.
     pub fn print_now(&mut self) -> bool {
+        if !self.profile.allows_feature(crate::features::Feature::Print) {
+            return false;
+        }
         // What's typed in a form field is part of what's printed (#166).
         if !self.commit_form_typing() {
             return false;
@@ -654,6 +662,8 @@ impl PdfCraftApp {
                 }
             }
             Some(printer) => self.send_to_printer(printer, bytes, self.print_draft.job(&name)),
+            // Save as PDF writes a copy.
+            None if !self.profile.allows_feature(crate::features::Feature::Download) => false,
             None => self.save_print_pdf(&name, bytes),
         }
     }
@@ -927,14 +937,15 @@ fn combo<T: PartialEq + Copy>(ui: &mut egui::Ui, id: &str, value: &mut T, choice
     });
 }
 
-/// Draw the dialog. `thumb` gives a page's thumbnail texture when there is one. Returns
-/// (print, cancel).
+/// Draw the dialog. `save_pdf` offers Save as PDF among the printers (the profile allows writing
+/// copies). `thumb` gives a page's thumbnail texture when there is one. Returns (print, cancel).
 pub(crate) fn body(
     ui: &mut egui::Ui,
     d: &mut PrintDraft,
     t: &Tokens,
     sizes: &[(f64, f64)],
     labels: &[String],
+    save_pdf: bool,
     thumb: &mut dyn FnMut(usize) -> Option<egui::TextureId>,
 ) -> (bool, bool) {
     ui.set_width(820.0);
@@ -956,6 +967,7 @@ pub(crate) fn body(
                     let shown = match d.printer.as_deref() {
                         Some(p) => printer_label(p),
                         None if still_looking(d) => tl!("Looking for printers…").to_string(),
+                        None if !save_pdf => String::new(),
                         None => tl!("Save as PDF").to_string(),
                     };
                     egui::ComboBox::from_id_salt("printer").selected_text(shown).width(260.0).show_ui(ui, |ui| {
@@ -973,7 +985,7 @@ pub(crate) fn body(
                         }
                         // Chosen even when it was already the selection, so the list arriving
                         // later doesn't replace it with the default printer.
-                        if ui.selectable_value(&mut d.printer, None, tl!("Save as PDF")).clicked() {
+                        if save_pdf && ui.selectable_value(&mut d.printer, None, tl!("Save as PDF")).clicked() {
                             d.printer_picked = true;
                         }
                     });
@@ -1374,8 +1386,13 @@ pub(crate) fn body(
     let (mut go, mut cancel) = (false, false);
     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
         let looking = still_looking(d);
-        let label = if d.printer.is_some() || looking { tl!("Print") } else { tl!("Save as PDF") };
-        if ui.add_enabled_ui(settings.is_ok() && !sheets.is_empty() && !looking, |ui| widgets::pill_button(ui, label, true)).inner.clicked() {
+        let label = if d.printer.is_some() || looking || !save_pdf { tl!("Print") } else { tl!("Save as PDF") };
+        let destination = d.printer.is_some() || save_pdf;
+        if ui
+            .add_enabled_ui(settings.is_ok() && !sheets.is_empty() && !looking && destination, |ui| widgets::pill_button(ui, label, true))
+            .inner
+            .clicked()
+        {
             go = true;
         }
         if widgets::pill_button(ui, tl!("Cancel"), false).clicked() {
