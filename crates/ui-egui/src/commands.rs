@@ -444,6 +444,8 @@ impl PdfCraftApp {
             "a11y.alt_text" => self.start_alt_text(),
             "a11y.autotag_fields" => self.autotag_form_fields(),
             "a11y.tags" => self.choose_right_panel(Some(RightPanel::Tags)),
+            // Reading options live on Document Properties ▸ Advanced, a file.properties tab.
+            "a11y.reading_options" if !self.profile.allows_id("file.properties") => self.notify(tl!("Not allowed")),
             "a11y.reading_options" => self.dialog = Some(Dialog::Properties(crate::PropsTab::Advanced)),
             "export.all_images" => self.dialog = Some(Dialog::Export(crate::export_ui::ExportKind::AllImages)),
             "edit.text" => {
