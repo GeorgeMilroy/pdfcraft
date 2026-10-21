@@ -222,7 +222,7 @@ pub(super) fn notices(
         if scripts_off && profile.allows_id("tools.js_console") && crate::widgets::pill_button(ui, tl!("JavaScript Console"), false).clicked() {
             open_console = true;
         }
-        if secured && profile.allows_id("file.properties") && crate::widgets::pill_button(ui, tl!("Security settings"), false).clicked() {
+        if secured && profile.allows_id("protect.properties") && crate::widgets::pill_button(ui, tl!("Security settings"), false).clicked() {
             open_security = true;
         }
         if secured && doc.can_unlock() && profile.allows_id("protect.unlock") && crate::widgets::pill_button(ui, tl!("Unlock…"), true).clicked() {

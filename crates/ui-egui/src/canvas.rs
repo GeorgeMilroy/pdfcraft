@@ -905,10 +905,7 @@ impl Offers {
                 _ => true,
             },
             find: profile.allows_id("edit.find"),
-            fields: crate::forms_ui::FieldOffers {
-                fill: profile.allows_feature(Feature::FormFill),
-                sign: profile.allows_feature(Feature::DigitalSignatures),
-            },
+            fields: crate::forms_ui::FieldOffers { fill: profile.allows_feature(Feature::FormFill), sign: profile.allows_id("sign.digital") },
         }
     }
 }
