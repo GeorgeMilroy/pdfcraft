@@ -628,10 +628,12 @@ pub(crate) fn header_controls(ui: &mut egui::Ui, info: &DocInfo, view: &mut DocV
             }
         }
         // Into the pages, for good once saved: apart from the list's other commands.
-        ui.separator();
-        if ui.button(tl!("Flatten comments")).clicked() {
-            command = Some("comment.flatten");
-            ui.close();
+        if profile.allows_id("comment.flatten") {
+            ui.separator();
+            if ui.button(tl!("Flatten comments")).clicked() {
+                command = Some("comment.flatten");
+                ui.close();
+            }
         }
     });
     let filter = icons::button(ui, "filter", 26.0, active, tl!("Filter comments"));

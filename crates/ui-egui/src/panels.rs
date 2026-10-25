@@ -24,7 +24,7 @@ pub(crate) fn offers(profile: &UiProfile, id: &str) -> bool {
 
 /// Whether a catalogue entry shows: [`UiProfile::shows_item`], and its command (or one of its
 /// actions) [`offers`]ed.
-fn item_shown(profile: &UiProfile, item: &catalog::ToolItem) -> bool {
+pub(crate) fn item_shown(profile: &UiProfile, item: &catalog::ToolItem) -> bool {
     profile.shows_item(item) && (offers(profile, item.command) || item.actions.iter().any(|a| offers(profile, a)))
 }
 
@@ -786,7 +786,7 @@ pub fn right_panel(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
                             close = true;
                         }
                         if panel == RightPanel::Pages
-                            && let Some(c) = page_tools(ui, !modal && view.panel_drag.is_none() && bm_editable, profile)
+                            && let Some(c) = page_tools(ui, !modal && view.panel_drag.is_none() && assembly, profile)
                         {
                             panel_command = Some(c);
                         }
@@ -1053,22 +1053,25 @@ pub fn right_panel(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
                             // A right-click on one of the row's buttons is a right-click on the row:
                             // the union keeps the row's id, so it is one menu either way.
                             let menu = buttons.into_iter().fold(row.response.clone(), |row, button| row | button);
-                            menu.context_menu(|ui| {
-                                if is_pdf && open_on && ui.button(tl!("Open in a new tab")).clicked() {
-                                    attachment_action = Some((ai, true));
-                                    ui.close();
-                                }
-                                if save_on && ui.button(tl!("Save attachment…")).clicked() {
-                                    attachment_action = Some((ai, false));
-                                    ui.close();
-                                }
-                                if let Some(key) = deletable
-                                    && ui.button(tl!("Delete attachment")).clicked()
-                                {
-                                    panel_edit = Some(pdfcraft_engine::Edit::DeleteAttachment { key: key.clone() });
-                                    ui.close();
-                                }
-                            });
+                            // No menu when the profile leaves none of its items.
+                            if (is_pdf && open_on) || save_on || deletable.is_some() {
+                                menu.context_menu(|ui| {
+                                    if is_pdf && open_on && ui.button(tl!("Open in a new tab")).clicked() {
+                                        attachment_action = Some((ai, true));
+                                        ui.close();
+                                    }
+                                    if save_on && ui.button(tl!("Save attachment…")).clicked() {
+                                        attachment_action = Some((ai, false));
+                                        ui.close();
+                                    }
+                                    if let Some(key) = deletable
+                                        && ui.button(tl!("Delete attachment")).clicked()
+                                    {
+                                        panel_edit = Some(pdfcraft_engine::Edit::DeleteAttachment { key: key.clone() });
+                                        ui.close();
+                                    }
+                                });
+                            }
                         }
                     }
                 });
@@ -1423,8 +1426,9 @@ fn page_tools(ui: &mut egui::Ui, enabled: bool, profile: &crate::profile::UiProf
         ("page.extract", tl!("Extract the selected pages…")),
         ("page.delete", tl!("Delete the selected pages")),
     ];
-    // Only what the profile allows, and no menu when it allows none of them.
-    let tools: Vec<(&'static str, &str)> = tools.into_iter().filter(|(id, _)| profile.allows_id(id)).collect();
+    // Only what the profile offers, each by its own command and feature (Extract is the export
+    // feature's, the rest page organization's), and no menu when it offers none of them.
+    let tools: Vec<(&'static str, &str)> = tools.into_iter().filter(|(id, _)| offers(profile, id)).collect();
     if tools.is_empty() {
         return None;
     }

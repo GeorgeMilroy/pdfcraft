@@ -3636,7 +3636,7 @@ impl PdfCraftApp {
                 object_ui::nudge_keys(ctx, &mut self.views[i], doc);
                 object_ui::delete_keys(ctx, &mut self.views[i]);
             } else if let Some(doc) = self.session.get(self.views[i].id).filter(|d| d.allows_annotation()) {
-                comments::nudge_keys(ctx, &mut self.views[i], &doc.info);
+                comments::nudge_keys(ctx, &mut self.views[i], &doc.info, &self.profile);
             }
             // A selected field moves with the arrows too (Prepare a form, #2608), before the view
             // turns the page with them.
