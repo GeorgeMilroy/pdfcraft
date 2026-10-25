@@ -2,7 +2,7 @@
 //! commands and tool groups, enforced where things happen; the default profile changes nothing.
 
 use egui_kittest::Harness;
-use egui_kittest::kittest::Queryable;
+use egui_kittest::kittest::{NodeT, Queryable};
 use pdfcraft_engine::{Edit, NewAnnotation, Shape, Style};
 use pdfcraft_ui_egui::profile::{UiProfile, parts};
 use pdfcraft_ui_egui::{Mode, PdfCraftApp};
@@ -216,4 +216,144 @@ fn all_tools_lists_every_group_the_profile_keeps_without_view_more() {
         assert!(h.query_all_by_label(label).count() >= 1, "{label} missing from All tools");
     }
     assert!(h.query_by_label("View more").is_none(), "nothing left to show");
+}
+
+#[test]
+fn the_expanded_all_tools_view_leaves_out_hidden_groups() {
+    let mut profile = UiProfile::default();
+    profile.hidden.insert("group:export".into());
+    let mut h = harness(profile);
+    h.state_mut().set_option("tools", "full").unwrap();
+    h.run_steps(4);
+    assert!(h.state().all_tools_full, "the expanded view is open");
+    assert!(h.query_by_label("Export a PDF").is_none(), "hidden tool group listed");
+    assert!(h.query_all_by_label("Add comments").count() >= 1, "other tool groups listed");
+}
+
+#[test]
+fn the_comments_panel_menu_offers_flatten_only_when_allowed() {
+    for (hidden, offered) in [(false, true), (true, false)] {
+        let mut profile = UiProfile::default();
+        if hidden {
+            profile.hidden.insert("comment.flatten".into());
+        }
+        let mut h = harness(profile);
+        assert!(h.state_mut().apply_edit(rectangle()));
+        h.state_mut().choose_right_panel(Some(pdfcraft_ui_egui::RightPanel::Comments));
+        h.run_steps(4);
+        h.get_by_label("More options").click();
+        h.run_steps(4);
+        assert_eq!(h.query_by_label("Flatten comments").is_some(), offered, "comment.flatten hidden: {hidden}");
+    }
+}
+
+#[test]
+fn the_page_tools_menu_shows_only_with_a_command_it_offers() {
+    let tools = ["page.insert_blank", "page.insert", "page.rotate_ccw", "page.rotate", "page.extract", "page.delete"];
+    for (hidden, shown) in [(&tools[..0], true), (&tools[..5], true), (&tools[..], false)] {
+        let mut profile = UiProfile::default();
+        profile.hidden.extend(hidden.iter().map(|id| (*id).to_string()));
+        let mut h = harness(profile);
+        h.state_mut().choose_right_panel(Some(pdfcraft_ui_egui::RightPanel::Pages));
+        h.run_steps(4);
+        assert_eq!(h.query_by_label("Page tools").is_some(), shown, "{} hidden", hidden.len());
+        if shown && hidden.len() == 5 {
+            h.get_by_label("Page tools").click();
+            h.run_steps(4);
+            assert!(h.query_by_label("Delete the selected pages").is_some(), "the one allowed tool");
+            assert!(h.query_by_label("Extract the selected pages…").is_none(), "a hidden tool");
+        }
+    }
+}
+
+#[test]
+fn the_arrow_keys_move_a_selected_comment_only_where_its_feature_is_on() {
+    use pdfcraft_ui_egui::features::{Feature, FeatureSet};
+    let mut no_shapes = FeatureSet::all();
+    no_shapes.remove(Feature::Shapes);
+    for (features, moves) in [(None, true), (Some(no_shapes), false)] {
+        let mut h = harness(UiProfile::default());
+        assert!(h.state_mut().apply_edit(rectangle()));
+        h.state_mut().profile = UiProfile { features, ..Default::default() };
+        h.run_steps(2);
+        let rect = |h: &Harness<'_, PdfCraftApp>| {
+            let (_, id) = h.state().active_ids().unwrap();
+            h.state().session.get(id).unwrap().info.annotations[0].rect
+        };
+        let before = rect(&h);
+        h.state_mut().views[0].comments.selected = Some((0, 0));
+        h.run_steps(2);
+        h.key_press(egui::Key::ArrowDown);
+        h.run_steps(4);
+        assert_eq!(rect(&h) != before, moves, "Shapes on: {moves}");
+        // Refused, the keys stay with the page: no "Not allowed" for a move nobody can make.
+        assert!(h.query_by_label_contains("Not allowed").is_none(), "Shapes on: {moves}");
+    }
+}
+
+#[test]
+fn the_page_tools_menu_follows_the_pages_feature_not_bookmarks() {
+    use pdfcraft_ui_egui::features::{Feature, FeatureSet};
+    let mut no_bookmarks = FeatureSet::all();
+    no_bookmarks.remove(Feature::Bookmarks);
+    let mut no_pages = FeatureSet::all();
+    no_pages.remove(Feature::Pages);
+    for (features, pages) in [(no_bookmarks, true), (no_pages, false)] {
+        let mut h = harness(UiProfile { features: Some(features), ..Default::default() });
+        h.state_mut().choose_right_panel(Some(pdfcraft_ui_egui::RightPanel::Pages));
+        h.run_steps(4);
+        let button = h.get_by_label("Page tools");
+        assert!(!button.accesskit_node().is_disabled(), "Pages on: {pages}");
+        button.click();
+        h.run_steps(4);
+        // Without Pages the menu keeps Extract (the export feature's), and it can be used.
+        assert_eq!(h.query_by_label("Delete the selected pages").is_some(), pages, "Pages on: {pages}");
+        let extract = h.get_by_label("Extract the selected pages…");
+        assert!(!extract.accesskit_node().is_disabled(), "Pages on: {pages}");
+    }
+}
+
+#[test]
+fn the_check_for_updates_at_start_follows_the_command() {
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    for (hidden, asks) in [(false, true), (true, false)] {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let counted = Arc::clone(&calls);
+        let mut profile = UiProfile::default();
+        if hidden {
+            profile.hidden.insert("help.check_updates".into());
+        }
+        let mut h = Harness::builder().with_size(egui::vec2(1200.0, 800.0)).build_eframe(move |_cc| {
+            let mut app = PdfCraftApp::new();
+            app.set_option("language", "en").unwrap();
+            app.set_update_source(Arc::new(move || {
+                counted.fetch_add(1, Ordering::SeqCst);
+                Ok(None)
+            }));
+            app.set_startup_update_check(true);
+            app.set_profile(profile);
+            app
+        });
+        // The check runs on a thread of its own: give it time to be asked.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(if asks { 30 } else { 1 });
+        while calls.load(Ordering::SeqCst) == 0 && std::time::Instant::now() < deadline {
+            h.run_steps(2);
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert_eq!(calls.load(Ordering::SeqCst) > 0, asks, "help.check_updates hidden: {hidden}");
+    }
+}
+
+#[test]
+fn the_tab_strip_preferences_button_follows_app_preferences() {
+    for (hidden, shown) in [(false, true), (true, false)] {
+        let mut profile = UiProfile::default();
+        if hidden {
+            profile.hidden.insert("app.preferences".into());
+        }
+        let h = harness(profile);
+        let button = h.query_all_by(|n| n.role() == egui::accesskit::Role::Button && n.label().as_deref() == Some("Preferences")).next().is_some();
+        assert_eq!(button, shown, "app.preferences hidden: {hidden}");
+    }
 }

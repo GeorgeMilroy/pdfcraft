@@ -380,22 +380,25 @@ pub fn right_panel(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
                             // A right-click on one of the row's buttons is a right-click on the row:
                             // the union keeps the row's id, so it is one menu either way.
                             let menu = buttons.into_iter().fold(row.response.clone(), |row, button| row | button);
-                            menu.context_menu(|ui| {
-                                if is_pdf && open_on && ui.button(tl!("Open in a new tab")).clicked() {
-                                    attachment_action = Some((ai, true));
-                                    ui.close();
-                                }
-                                if save_on && ui.button(tl!("Save attachment…")).clicked() {
-                                    attachment_action = Some((ai, false));
-                                    ui.close();
-                                }
-                                if let Some(key) = deletable
-                                    && ui.button(tl!("Delete attachment")).clicked()
-                                {
-                                    panel_edit = Some(pdfcraft_engine::Edit::DeleteAttachment { key: key.clone() });
-                                    ui.close();
-                                }
-                            });
+                            // No menu when the profile leaves none of its items.
+                            if (is_pdf && open_on) || save_on || deletable.is_some() {
+                                menu.context_menu(|ui| {
+                                    if is_pdf && open_on && ui.button(tl!("Open in a new tab")).clicked() {
+                                        attachment_action = Some((ai, true));
+                                        ui.close();
+                                    }
+                                    if save_on && ui.button(tl!("Save attachment…")).clicked() {
+                                        attachment_action = Some((ai, false));
+                                        ui.close();
+                                    }
+                                    if let Some(key) = deletable
+                                        && ui.button(tl!("Delete attachment")).clicked()
+                                    {
+                                        panel_edit = Some(pdfcraft_engine::Edit::DeleteAttachment { key: key.clone() });
+                                        ui.close();
+                                    }
+                                });
+                            }
                         }
                     }
                 });

@@ -71,10 +71,13 @@ impl PdfCraftApp {
         #[cfg(not(target_arch = "wasm32"))]
         {
             let Some(ctx) = self.ctx.clone() else { return };
+            // The check at start is Help ▸ Check for updates unasked: not where the profile
+            // refuses that command (free-pdf-sdk).
+            let at_start = self.profile.allows_id("help.check_updates");
             let updates = &mut self.updates;
             if std::mem::take(&mut updates.check_requested) {
                 updates.updater.check_now(&ctx);
-            } else if updates.startup_check {
+            } else if updates.startup_check && at_start {
                 updates.updater.check_at_start(&ctx);
             }
             updates.updater.tick(&ctx);
