@@ -796,8 +796,9 @@ pub(crate) fn delete_selected(cv: &mut CommentView, info: &DocInfo) -> Option<Ed
 /// The arrow keys move the selected comment a screen pixel; with ⌘/Ctrl or Shift, ten. Up is up
 /// on screen whatever the zoom, the page's rotation and the view's; the keys are taken before
 /// the view scrolls or turns the page with them. Each press is one undo step. Text markup stays
-/// with its text, and a locked comment where it is.
-pub(crate) fn nudge_keys(ctx: &egui::Context, keys: PageKeys, view: &mut DocView, info: &DocInfo) {
+/// with its text, and a locked comment where it is, and so does a comment whose feature the profile
+/// refuses: the arrows then scroll and turn the page as usual.
+pub(crate) fn nudge_keys(ctx: &egui::Context, keys: PageKeys, view: &mut DocView, info: &DocInfo, profile: &UiProfile) {
     if ctx.egui_wants_keyboard_input() || view.pending_edit.is_some() {
         return;
     }
@@ -806,7 +807,10 @@ pub(crate) fn nudge_keys(ctx: &egui::Context, keys: PageKeys, view: &mut DocView
         return;
     }
     let Some((page, index)) = cv.selected else { return };
-    let movable = info.annotations.iter().any(|a| a.page == page && a.index == index && !a.is_reply() && !on_text(a) && !a.locked);
+    let movable = info
+        .annotations
+        .iter()
+        .any(|a| a.page == page && a.index == index && !a.is_reply() && !on_text(a) && !a.locked && profile.allows_feature(feature_of(a)));
     let (Some(xf), Some(p)) = (view.page_xform(page), info.pages.get(page)) else { return };
     if !movable {
         return;

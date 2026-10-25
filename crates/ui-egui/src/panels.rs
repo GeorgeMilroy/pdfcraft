@@ -17,7 +17,7 @@ pub(crate) fn offers(profile: &UiProfile, id: &str) -> bool {
 
 /// Whether a catalogue entry shows: [`UiProfile::shows_item`], and its command (or one of its
 /// actions) [`offers`]ed.
-fn item_shown(profile: &UiProfile, item: &catalog::ToolItem) -> bool {
+pub(crate) fn item_shown(profile: &UiProfile, item: &catalog::ToolItem) -> bool {
     profile.shows_item(item) && (offers(profile, item.command) || item.actions.iter().any(|a| offers(profile, a)))
 }
 
