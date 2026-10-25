@@ -75,7 +75,10 @@ impl PdfCraftApp {
         {
             let Some(ctx) = self.ctx.clone() else { return };
             // Settled on the first frame: a preference turned on later waits for the next start.
-            let at_start = std::mem::take(&mut self.updates.startup_check) && self.update_check_at_start;
+            // The check at start is Help ▸ Check for updates unasked: not where the profile
+            // refuses that command (free-pdf-sdk).
+            let at_start =
+                std::mem::take(&mut self.updates.startup_check) && self.update_check_at_start && self.profile.allows_id("help.check_updates");
             let updates = &mut self.updates;
             if std::mem::take(&mut updates.check_requested) {
                 updates.updater.check_now(&ctx);

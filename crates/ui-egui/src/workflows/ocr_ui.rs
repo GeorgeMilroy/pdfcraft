@@ -231,6 +231,10 @@ impl PdfCraftApp {
         if !editing || self.mode == crate::Mode::Read || self.modal_open() || self.ocr_run.is_some() || self.ocr_batch.is_some() {
             return None;
         }
+        // Recognizing text is the OCR feature's (free-pdf-sdk): a profile without it reads nothing.
+        if !self.profile.allows_id("ocr.recognize") {
+            return None;
+        }
         let (view, doc) = self.active_ids()?;
         let page = self.views[view].current;
         if self.views[view].auto_ocr_tried.contains(&page) {
@@ -578,6 +582,18 @@ mod tests {
         assert_eq!(found(&mut app_with(text)), None, "a page of text is no scan");
         let blank = Session::new().create_blank(595.0, 842.0, 1).unwrap().to_vec();
         assert_eq!(found(&mut app_with(blank)), None, "nor is a blank page");
+    }
+
+    #[test]
+    fn a_profile_without_text_recognition_reads_nothing() {
+        let mut app = app_with(scan());
+        assert_eq!(found(&mut app), Some(0));
+        app.profile.hidden.insert("ocr.recognize".into());
+        assert_eq!(found(&mut app), None, "ocr.recognize hidden");
+        let mut no_ocr = crate::features::FeatureSet::all();
+        no_ocr.remove(crate::features::Feature::Ocr);
+        app.profile = crate::profile::UiProfile { features: Some(no_ocr), ..Default::default() };
+        assert_eq!(found(&mut app), None, "the OCR feature off");
     }
 
     #[test]
