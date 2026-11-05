@@ -88,7 +88,9 @@ fn all_tools(app: &mut PdfCraftApp, ui: &mut egui::Ui, t: &Tokens) {
         let visible: Vec<&'static ToolGroup> = TOOL_GROUPS.iter().filter(|g| group_shown(&app.profile, g)).collect();
         let shown = if app.all_tools_expanded { visible.len() } else { COLLAPSED_TOOLS.min(visible.len()) };
         for g in visible.iter().take(shown) {
-            let (resp, pin_clicked) = tool_row(ui, t, g, app.is_tool_pinned(g.id));
+            // Pinning to Home is a preference, and only where Home shows.
+            let pinnable = app.profile.allows_id("app.preferences") && app.profile.shows_part(crate::profile::parts::HOME);
+            let (resp, pin_clicked) = tool_row(ui, t, g, pinnable.then(|| app.is_tool_pinned(g.id)));
             if pin_clicked {
                 app.toggle_pin_tool(g.id);
             } else if resp.clicked() {
@@ -123,8 +125,10 @@ pub(super) fn row_label(ui: &mut egui::Ui, text: &str, font: egui::FontId, color
     elided
 }
 
-/// Draw one tool-group row with its icon, label, badge and availability hint.
-fn tool_row(ui: &mut egui::Ui, t: &Tokens, g: &ToolGroup, is_pinned: bool) -> (egui::Response, bool) {
+/// Draw one tool-group row with its icon, label, badge and availability hint, and its pin toggle
+/// when `pin` (whether the group is pinned) is offered.
+fn tool_row(ui: &mut egui::Ui, t: &Tokens, g: &ToolGroup, pin: Option<bool>) -> (egui::Response, bool) {
+    let is_pinned = pin.unwrap_or(false);
     let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), 34.0), Sense::click());
     resp.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, tl!(g.label)));
     let press = theme::Press::track(ui, &resp);
@@ -133,8 +137,8 @@ fn tool_row(ui: &mut egui::Ui, t: &Tokens, g: &ToolGroup, is_pinned: bool) -> (e
     icons::paint(ui, Rect::from_min_size(body.min + vec2(6.0, 7.0), vec2(20.0, 20.0)), g.icon, 19.0, hue(g));
 
     let pin_rect = Rect::from_center_size(body.right_center() - vec2(14.0, 0.0), vec2(22.0, 22.0));
-    let pin_resp = ui.interact(pin_rect, ui.scope_id().with(("pin_toggle_row", g.id)), Sense::click());
-    let pin_hovered = pin_resp.hovered();
+    let pin_resp = pin.is_some().then(|| ui.interact(pin_rect, ui.scope_id().with(("pin_toggle_row", g.id)), Sense::click()));
+    let pin_hovered = pin_resp.as_ref().is_some_and(egui::Response::hovered);
     let mut pin_clicked = false;
 
     let pin_space = 26.0;
@@ -172,7 +176,9 @@ fn tool_row(ui: &mut egui::Ui, t: &Tokens, g: &ToolGroup, is_pinned: bool) -> (e
     }
 
     let row_hovered = ui.rect_contains_pointer(rect) || resp.hovered();
-    if is_pinned || row_hovered || pin_hovered {
+    if let Some(pin_resp) = pin_resp
+        && (is_pinned || row_hovered || pin_hovered)
+    {
         if pin_hovered {
             ui.painter().rect_filled(pin_rect, CornerRadius::same(4), t.pressed);
         }

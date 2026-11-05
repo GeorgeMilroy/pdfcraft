@@ -193,7 +193,9 @@ pub fn show(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
                         ui.spacing_mut().item_spacing = vec2(14.0, 14.0);
                         for id in &pinned {
                             let Some(g) = catalog::group(id).filter(|g| app.shows_tool_group(g.id)) else { continue };
-                            if let Some(to_unpin) = tool_card(app, ui, &t, g, true) {
+                            // Unpinning is a preference too.
+                            let unpin = app.profile.allows_id("app.preferences");
+                            if let Some(to_unpin) = tool_card(app, ui, &t, g, unpin) {
                                 unpin_tool = Some(to_unpin);
                             }
                         }
