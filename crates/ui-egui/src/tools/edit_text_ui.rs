@@ -1530,6 +1530,12 @@ C", &picked
         Offers::publish(&ctx, &crate::profile::UiProfile { features: Some(set), ..Default::default() });
         assert!(!Offers::get(&ctx).copy);
         assert!(Offers::get(&ctx).edit);
+        // The picture menu's sticky note and Draw freehand follow their own commands.
+        let hidden = |id: &str| crate::profile::UiProfile { hidden: [id.to_string()].into_iter().collect(), ..Default::default() };
+        Offers::publish(&ctx, &hidden("comment.note"));
+        assert!(!Offers::get(&ctx).note && Offers::get(&ctx).draw);
+        Offers::publish(&ctx, &hidden("comment.ink"));
+        assert!(Offers::get(&ctx).note && !Offers::get(&ctx).draw);
     }
 
     #[test]

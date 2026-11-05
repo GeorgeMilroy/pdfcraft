@@ -62,7 +62,12 @@ fn a_custom_brand_names_the_app_everywhere_and_drops_the_marks() {
     }
     no_trademarks(&h, "about");
 
-    // Translated strings are renamed too.
+    // Translated strings are renamed too: in a build that embeds the craft-i18n catalogs (a
+    // build without them is English only, as upstream's own catalog tests skip).
+    if !pdfcraft_ui_egui::i18n::catalogs_embedded() {
+        eprintln!("skipping the German half: built without craft-i18n (set CRAFT_I18N_DIR to a craft-i18n checkout)");
+        return;
+    }
     h.state_mut().set_option("language", "de").unwrap();
     h.state_mut().set_option("dialog", "none").unwrap();
     h.run_steps(4);

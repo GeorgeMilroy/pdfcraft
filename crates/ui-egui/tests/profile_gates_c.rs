@@ -147,7 +147,8 @@ fn the_quick_bar_hides_as_a_part_and_keeps_fill_and_sign_while_any_fill_tool_is_
         let mut h = harness(profile);
         h.state_mut().set_option("mode", "edit").unwrap();
         h.run_steps(4);
-        (count(&h, "Select (V)"), count(&h, "Fill & Sign"), count(&h, "Edit text & images"))
+        // The Fill & Sign button is labelled with the tool it picks ("Fill & Sign: Add text").
+        (count(&h, "Select (V)"), h.query_all_by_label_contains("Fill & Sign").count(), count(&h, "Edit text & images"))
     };
     let default = shown(UiProfile::default());
     assert_eq!(default.0, 1, "the quick bar shows by default");

@@ -750,6 +750,7 @@ fn the_hover_outline_goes_round_what_a_press_would_take() {
         tool: QuickTool::Select,
         prefs: &prefs,
         allowed: true,
+        profile: &crate::profile::UiProfile::default(),
         hidden: false,
         redact_mark: ([0.0; 3], 1.0),
         keys: Default::default(),
