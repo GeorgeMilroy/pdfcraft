@@ -2380,3 +2380,26 @@ fn a_camera_corner_at_the_page_edge_is_hit_on_the_page_only() {
     assert!(crate::camera_ui::hit(&xf, 0, &v, pos2(14.0, 24.0)).is_some(), "on the page");
     assert!(crate::camera_ui::hit(&xf, 0, &v, pos2(6.0, 16.0)).is_none(), "just off it");
 }
+
+#[test]
+fn the_page_menu_offers_only_what_the_profile_allows() {
+    use crate::features::Feature;
+    use crate::profile::UiProfile;
+    use PageMenuAction as A;
+    let every = PageMenuOffers::of(&UiProfile::default());
+    for a in [A::Print, A::Copy, A::Paste(0, [0.0; 2]), A::AddComment(0, [0.0; 2]), A::DeletePage(0), A::ExportPdf, A::DocProperties] {
+        assert!(every.offers(&a), "the default profile offers {a:?}");
+    }
+    let hidden = UiProfile { hidden: ["print.dialog".to_string(), "group:export".to_string()].into_iter().collect(), ..UiProfile::default() };
+    let offers = PageMenuOffers::of(&hidden);
+    assert!(!offers.offers(&A::Print) && !offers.offers(&A::ExportPdf), "hidden by id and by group");
+    assert!(offers.offers(&A::Copy), "the rest stays");
+    let comments_only = UiProfile { features: Some([Feature::Comments].into_iter().collect()), ..UiProfile::default() };
+    let offers = PageMenuOffers::of(&comments_only);
+    assert!(offers.offers(&A::AddComment(0, [0.0; 2])));
+    for a in [A::DeletePage(0), A::AddImage, A::EditPdf, A::AddBookmark, A::ExportPdf] {
+        assert!(!offers.offers(&a), "comments only offers no {a:?}");
+    }
+    // Turning the view is the viewer's: always there.
+    assert!(offers.offers(&A::RotateCW) && offers.offers(&A::RotateCCW));
+}

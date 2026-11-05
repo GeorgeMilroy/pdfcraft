@@ -155,6 +155,10 @@ fn tool_buttons(ui: &mut egui::Ui, app: &PdfCraftApp, tools: &[String], cell: f3
         if button.clicked() {
             *run = Some(spec.id);
         }
+        // Changing the hotbar's tools is a preference.
+        if !app.profile.allows_id("app.preferences") {
+            continue;
+        }
         button.context_menu(|ui| {
             if ui.button(tl!("Remove from hotbar")).clicked() {
                 *remove = Some(index);
@@ -479,8 +483,11 @@ pub(crate) fn show(app: &mut PdfCraftApp, area: Rect, page_left: Option<f32>, ui
         bounds.min + vec2(travel.x * bar.position[0], travel.y * bar.position[1])
     };
     let mut run = None;
-    let was_picker_open = bar.picker_open;
-    let mut picker_open = bar.picker_open;
+    // Customizing the hotbar (its tools, size, layout and docking) is a preference: without it the
+    // settings button isn't drawn and its window stays closed.
+    let customizable = app.profile.allows_id("app.preferences");
+    let was_picker_open = bar.picker_open && customizable;
+    let mut picker_open = was_picker_open;
     let mut settings_clicked = false;
     let shown = egui::Area::new(id).order(egui::Order::Middle).fixed_pos(pos).constrain_to(bounds).show(&ctx, |ui| {
         let frame = if full_side {
@@ -507,7 +514,9 @@ pub(crate) fn show(app: &mut PdfCraftApp, area: Rect, page_left: Option<f32>, ui
             if full_side {
                 if bar.vertical {
                     ui.with_layout(egui::Layout::bottom_up(egui::Align::Center), |ui| {
-                        settings_clicked |= settings_button(ui, cell, &mut picker_open);
+                        if customizable {
+                            settings_clicked |= settings_button(ui, cell, &mut picker_open);
+                        }
                         ui.add_space(4.0);
                         let remaining = ui.available_height().max(cell);
                         egui::ScrollArea::vertical().max_height(remaining).show(ui, |ui| {
@@ -523,7 +532,9 @@ pub(crate) fn show(app: &mut PdfCraftApp, area: Rect, page_left: Option<f32>, ui
                     });
                 } else {
                     ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        settings_clicked |= settings_button(ui, cell, &mut picker_open);
+                        if customizable {
+                            settings_clicked |= settings_button(ui, cell, &mut picker_open);
+                        }
                         ui.add_space(4.0);
                         let remaining = ui.available_width().max(cell);
                         egui::ScrollArea::horizontal().max_height(cell).max_width(remaining).show(ui, |ui| {
@@ -553,7 +564,8 @@ pub(crate) fn show(app: &mut PdfCraftApp, area: Rect, page_left: Option<f32>, ui
                     let drag_label = tl!("Drag hotbar");
                     let grip = grip.on_hover_text(drag_label).on_hover_cursor(egui::CursorIcon::Grab);
                     grip.widget_info(|| egui::WidgetInfo::labeled(egui::Role::Button, true, drag_label));
-                    if grip.dragged() && bar.dock.is_none() {
+                    // Moving the bar is part of the layout a locked profile keeps.
+                    if grip.dragged() && bar.dock.is_none() && !app.profile.lock_layout {
                         let delta = grip.drag_delta();
                         if !bar.placed {
                             let cur_x = (pos.x - bounds.min.x).max(0.0);
@@ -578,7 +590,9 @@ pub(crate) fn show(app: &mut PdfCraftApp, area: Rect, page_left: Option<f32>, ui
                                 }
                             });
                         });
-                        settings_clicked |= settings_button(ui, cell, &mut picker_open);
+                        if customizable {
+                            settings_clicked |= settings_button(ui, cell, &mut picker_open);
+                        }
                     } else {
                         core_tool_buttons(ui, app, cell, popup_align, &t);
                         active_tool_controls(ui, app, &t, false);
@@ -591,7 +605,9 @@ pub(crate) fn show(app: &mut PdfCraftApp, area: Rect, page_left: Option<f32>, ui
                                 });
                             });
                         }
-                        settings_clicked |= settings_button(ui, cell, &mut picker_open);
+                        if customizable {
+                            settings_clicked |= settings_button(ui, cell, &mut picker_open);
+                        }
                     }
                 });
             }

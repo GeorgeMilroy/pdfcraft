@@ -373,6 +373,10 @@ impl PdfCraftApp {
                     fill if fill.starts_with("fill-") => {
                         let tool =
                             fill_sign::FillTool::from_command(&format!("sign.fill.{}", &fill[5..])).ok_or_else(|| format!("unknown tool {fill}"))?;
+                        // Remembered as the last Fill & Sign tool only once the profile allows it.
+                        if !self.profile.allows_id(tool.command()) {
+                            return Err(format!("the profile doesn't allow the {value} tool"));
+                        }
                         self.fill_tool = tool;
                         QuickTool::Fill(tool)
                     }

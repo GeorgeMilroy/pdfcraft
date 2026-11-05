@@ -3013,6 +3013,21 @@ fn refine_goto_point(mut scroll: egui::ScrollArea, view: &mut DocView, geometry:
     scroll
 }
 
+/// Opens the Comments panel for a comment's Reply. `choose_right_panel` would borrow all of the
+/// app while its view is held; same effect, and the same refusal of a panel the profile hides.
+fn reveal_comments(right: &mut Option<RightPanel>, closed: &mut bool, profile: &crate::profile::UiProfile) {
+    if profile.shows_panel(RightPanel::Comments) {
+        *right = Some(RightPanel::Comments);
+        *closed = false;
+    }
+}
+
+/// Whether the quick tools show: Read mode hides them (#2646), full screen is the page and nothing
+/// else (#1459), and the profile can hide them too; they come back with the window.
+fn quick_bar_shown(app: &PdfCraftApp) -> bool {
+    app.mode != crate::Mode::Read && !app.full_screen && app.profile.shows_part(crate::profile::parts::QUICK_BAR)
+}
+
 /// Draws the document tab at `index`: its notice bars, then its pages (or the Organize grid) in a
 /// scroll area with this frame's zoom, scrolling, tool input, overlays and render requests.
 pub fn document_area(app: &mut PdfCraftApp, index: usize, ui: &mut egui::Ui) {
@@ -3357,16 +3372,11 @@ pub fn document_area(app: &mut PdfCraftApp, index: usize, ui: &mut egui::Ui) {
     let field_props = field_props.then(|| view.prepare.selected.clone()).flatten();
     match canvas_action {
         Some(comments::CanvasAction::Edit(e)) => view.pending_edit = Some(*e),
-        // `choose_right_panel` would borrow all of `app` while `view` is held; same effect, and
-        // the same refusal of a panel the profile hides.
-        Some(comments::CanvasAction::OpenComments) if app.profile.shows_panel(RightPanel::Comments) => {
-            app.right = Some(RightPanel::Comments);
-            app.comments_panel_closed = false;
-        }
+        Some(comments::CanvasAction::OpenComments) => reveal_comments(&mut app.right, &mut app.comments_panel_closed, &app.profile),
         Some(comments::CanvasAction::Properties(p, i)) => open_props = Some((p, i)),
         Some(comments::CanvasAction::CopyImage(p, i)) => image_action = Some(crate::edit_text_ui::ImageAction::Copy(p, i)),
         Some(comments::CanvasAction::CopyImageFile(p, i)) => image_action = Some(crate::edit_text_ui::ImageAction::CopyFile(p, i)),
-        Some(comments::CanvasAction::OpenComments) | None => {}
+        None => {}
     }
     schedule_presentation_turn(ui, view, present, clicked_link.is_some());
     let remote_open = follow_link(app, index, clicked_link);
@@ -3628,9 +3638,7 @@ fn apply_frame_requests(app: &mut PdfCraftApp, index: usize, ui: &mut egui::Ui, 
     if copy_selected {
         app.execute("edit.copy");
     }
-    // Read mode hides the tools (#2646), full screen is the page and nothing else (#1459), and
-    // the profile can hide them too; the quick tools come back with the window.
-    if app.mode != crate::Mode::Read && !app.full_screen && app.profile.shows_part(crate::profile::parts::QUICK_BAR) {
+    if quick_bar_shown(app) {
         // The page nearest the left edge, whose margin the bar sits in.
         let page_left = app.views[index].screen_rects.iter().map(|(_, r)| r.left()).reduce(f32::min);
         quick_bar(app, avail, page_left, ui);

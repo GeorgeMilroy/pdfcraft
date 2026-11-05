@@ -204,6 +204,16 @@ mod review_tests {
     }
 
     #[test]
+    fn a_profile_without_image_editing_pastes_no_picture() {
+        let paste = || vec![egui::Event::ModifiersChanged(egui::Modifiers::COMMAND), delivered(), key(false, egui::Modifiers::COMMAND)];
+        let mut app = image_app();
+        assert_eq!(frame(&mut app, &egui::Context::default(), 1.0, paste()), 1, "the default profile pastes");
+        let mut app = image_app();
+        app.set_profile(crate::profile::UiProfile { hidden: ["edit.image".to_string()].into_iter().collect(), ..Default::default() });
+        assert_eq!(frame(&mut app, &egui::Context::default(), 1.0, paste()), 0, "no picture where the profile refuses image editing");
+    }
+
+    #[test]
     fn clipboard_history_after_a_completed_paste_does_not_paste_on_open() {
         for explicit_press in [false, true] {
             let mut app = image_app();
