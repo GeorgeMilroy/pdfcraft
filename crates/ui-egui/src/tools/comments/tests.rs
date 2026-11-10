@@ -636,7 +636,7 @@ fn stale_comment_state_is_cleared_and_delete_never_hits_non_comment_slots() {
         });
         let mut out = ctx.run_ui(input, |ui| {
             let mut tool = QuickTool::Select;
-            keys(ui.ctx(), crate::page_keys::PageKeys::new(false), &mut view, &shifted, &mut tool, true);
+            keys(ui.ctx(), crate::page_keys::PageKeys::new(false), &mut view, &shifted, &mut tool, true, &crate::profile::UiProfile::default());
         });
         out.textures_delta.clear();
         assert_eq!(view.comments.selected, None);

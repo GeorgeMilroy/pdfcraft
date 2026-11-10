@@ -23,7 +23,9 @@ impl crate::PdfCraftApp {
                 }
             }
             Action::Split { tab, down } => {
-                if let Some(i) = self.tab_with_key(tab) {
+                if self.profile.allows_id("view.split")
+                    && let Some(i) = self.tab_with_key(tab)
+                {
                     self.split_tab(i, down);
                 }
             }

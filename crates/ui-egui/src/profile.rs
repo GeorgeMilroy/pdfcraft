@@ -244,12 +244,18 @@ pub fn is_comment_edit(edit: &Edit) -> bool {
         | Edit::LockAnnotation { .. }
         | Edit::MoveAnnotation { .. }
         | Edit::ResizeAnnotation { .. }
+        | Edit::ReshapeAnnotation { .. }
         | Edit::StyleAnnotation { .. }
         | Edit::FillAnnotation { .. }
+        | Edit::PartOpacity { .. }
         | Edit::FontSizeAnnotation { .. }
+        | Edit::BorderColorAnnotation { .. }
+        | Edit::BorderShapeAnnotation { .. }
+        | Edit::SetAnnotationPopup { .. }
         | Edit::SetAnnotationInfo { .. }
         | Edit::SetMeasurementScale { .. }
-        | Edit::ImportData { .. } => true,
+        | Edit::ImportData { .. }
+        | Edit::PasteComments { .. } => true,
         Edit::Batch { edits, .. } => edits.iter().all(is_comment_edit),
         _ => false,
     }

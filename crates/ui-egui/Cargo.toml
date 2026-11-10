@@ -43,6 +43,9 @@ serde = { workspace = true }
 serde_json = { workspace = true }
 log = { workspace = true }
 zeroize = { workspace = true }
+# free-pdf-sdk: reads the kinds of pasted XFDF comments for the UI profile (the version
+# pdfcraft-xfdf already uses).
+roxmltree = "0.21"
 # UTC/calendar display (combine modified-time stamp, the form date picker) goes through chrono
 # (no hand-rolled calendar code); std-only, so it stays wasm-safe.
 chrono = { workspace = true }

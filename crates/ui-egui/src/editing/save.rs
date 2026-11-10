@@ -67,6 +67,7 @@ impl PdfCraftApp {
         let signed = self.session.get(id).is_some_and(|d| d.is_signed());
         let answered = self.lock_answered.take() == Some(id);
         if self.ask_to_lock_signatures
+            && self.profile.allows_feature(crate::features::Feature::Flatten)
             && !self.flatten_fill_sign_on_save
             && self.placed_signatures.contains(&id)
             && still_marked
@@ -257,6 +258,11 @@ impl PdfCraftApp {
     /// Lock document `id`'s Fill & Sign marks into its pages (an undoable edit). Returns false,
     /// having told the user why, when that fails.
     fn flatten_fill_sign_in(&mut self, id: pdfcraft_engine::DocId) -> bool {
+        // Locking marks into the page is flattening, which the profile may refuse.
+        if !self.profile.allows_feature(crate::features::Feature::Flatten) {
+            self.notify(tl!("Not allowed"));
+            return false;
+        }
         let before = self.session.get(id).map(|d| d.edit_generation());
         if let Err(e) = self.session.apply(id, pdfcraft_engine::Edit::FlattenFillSign) {
             self.notify_error(e);

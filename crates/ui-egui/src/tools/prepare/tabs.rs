@@ -397,11 +397,17 @@ pub(super) fn calculate_tab(ui: &mut egui::Ui, d: &mut FieldDraft, t: &crate::th
         ui.add(crate::widgets::block(expr).hint_text("Price * Quantity").desired_rows(2).desired_width(420.0));
         ui.label(egui::RichText::new(tl!("Field names with + - * / and parentheses; put \\ before spaces in names.")).small().color(t.text_faint));
     }
+    // A custom calculation is JavaScript: without the javascript feature it is not offered, and a
+    // field's existing script is shown, not edited.
+    let scripts = crate::dialogs::frame_profile(ui.ctx()).allows_feature(crate::features::Feature::JavaScript);
+    if !scripts && !matches!(d.calculate, Calculate::Custom(_)) {
+        return;
+    }
     let mut m3 = match d.calculate {
         Calculate::Custom(_) => Mode::Custom,
         _ => m2,
     };
-    let radio = widgets::radio_value(ui, &mut m3, Mode::Custom, tl!("Custom calculation script:"));
+    let radio = ui.add_enabled_ui(scripts, |ui| widgets::radio_value(ui, &mut m3, Mode::Custom, tl!("Custom calculation script:"))).inner;
     if radio.clicked() && !matches!(d.calculate, Calculate::Custom(_)) {
         d.calculate = custom(d);
     }
@@ -420,7 +426,11 @@ pub(super) fn calculate_tab(ui: &mut egui::Ui, d: &mut FieldDraft, t: &crate::th
             let note = note.to_owned();
             ui.ctx().accesskit_node_builder(id, |node| node.set_description(note));
         };
-        if js.len() > MAX_EDITED_SCRIPT {
+        if !scripts {
+            // Shown as it is (selectable, so it can be copied), not edited.
+            let mut whole: &str = &js[..js.floor_char_boundary(MAX_EDITED_SCRIPT)];
+            script_box(ui, &mut whole);
+        } else if js.len() > MAX_EDITED_SCRIPT {
             // Too long to edit: its start is shown, read-only (selectable, so it can be copied).
             let kib = (js.len() / 1024).to_string();
             let note =

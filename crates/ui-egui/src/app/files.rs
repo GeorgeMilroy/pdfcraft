@@ -578,8 +578,12 @@ impl PdfCraftApp {
         let busy = self.modal_open() || self.pickers.pending() || self.pending_opens.iter().any(|p| p.activate);
         #[cfg(target_arch = "wasm32")]
         let busy = self.modal_open() || self.web_reads.load(std::sync::atomic::Ordering::Relaxed) > 0;
+        // The initial document opens in a tab of its own: only where the profile lets documents
+        // open in tabs, as an attachment's Open in a new tab does. Otherwise the portfolio stays
+        // the document shown, with its file list.
         if !busy
             && let Some((doc, key)) = self.portfolio_initial.take()
+            && comments::attachment_offers(&self.profile).1
             && self.active_ids().is_some_and(|(_, id)| id == doc)
             && let Some(index) = self.portfolio_attachment(doc, &key)
         {

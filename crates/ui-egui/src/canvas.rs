@@ -1891,7 +1891,8 @@ fn cached_edit_images<'a>(view: &'a mut DocView, doc: &pdfcraft_engine::Document
 }
 
 fn draw_page(ui: &mut egui::Ui, view: &mut DocView, frame: &mut PageFrame<'_>, i: usize) {
-    let PageEnv { allowed, comments_hidden, doc, editing_content, info, keys, ppp, prefs, profile, rects, redact_mark, scale, t, tool, .. } = frame.env;
+    let PageEnv { allowed, comments_hidden, doc, editing_content, info, keys, ppp, prefs, profile, rects, redact_mark, scale, t, tool, .. } =
+        frame.env;
     let PageFrame { ptr, origin, visible, pressed, pointer, .. } = *frame;
     let r = snap_to_pixels(rects[i].translate(origin.to_vec2()), ppp);
     if !r.intersects(visible.expand(400.0)) {
@@ -2993,7 +2994,24 @@ fn scroll_direction(dir: i8, dy: f32, resized: bool) -> i8 {
 /// text editor was finished.
 fn frame_overlays(ui: &mut egui::Ui, view: &mut DocView, env: &PageEnv<'_>, primary_down: bool, hover_text: Option<(Pos2, String)>) -> bool {
     let PageEnv {
-        added, allowed, author, avail, can_modify, comments_hidden, doc, form, info, keys, prefs, t, today, tool, units, unobstructed, offers, ..
+        added,
+        allowed,
+        author,
+        avail,
+        can_modify,
+        comments_hidden,
+        doc,
+        form,
+        info,
+        keys,
+        prefs,
+        t,
+        today,
+        tool,
+        units,
+        unobstructed,
+        offers,
+        ..
     } = *env;
     if let Some((pos, text)) = hover_text {
         // Click-through, as a tooltip is: the pages lose the pointer under anything that isn't.
@@ -3371,7 +3389,9 @@ fn reveal_comments(right: &mut Option<RightPanel>, closed: &mut bool, profile: &
 /// page and nothing else (#1459), a document that hides the toolbars (`HideToolbar`) hides this
 /// one too, and the profile can hide them; they come back with the window.
 fn quick_bar_shown(app: &PdfCraftApp, index: usize) -> bool {
-    !app.hotbar_hidden() && !app.views.get(index).is_some_and(|v| v.interface.hidden.toolbar) && app.profile.shows_part(crate::profile::parts::QUICK_BAR)
+    !app.hotbar_hidden()
+        && !app.views.get(index).is_some_and(|v| v.interface.hidden.toolbar)
+        && app.profile.shows_part(crate::profile::parts::QUICK_BAR)
 }
 
 /// Draws the document tab at `index`: its notice bars, then its pages (or the Organize grid) in a
@@ -3430,8 +3450,10 @@ pub fn document_area(app: &mut PdfCraftApp, index: usize, ui: &mut egui::Ui) {
     let text_style = app.text_style.clone();
     let show_secured_notice = app.show_secured_notice;
     // Offer to lock a just-placed signature (#2149) on the same terms the save-time question
-    // asks: one is still there, saving doesn't lock it anyway, and the document isn't signed.
+    // asks: one is still there, saving doesn't lock it anyway, the document isn't signed, and the
+    // profile allows flattening.
     let lock_offer = !app.flatten_fill_sign_on_save
+        && app.profile.allows_feature(crate::features::Feature::Flatten)
         && app.placed_signatures.contains(&app.views[index].id)
         && doc.info.annotations.iter().any(|a| a.fill_sign)
         && !doc.is_signed();
@@ -3636,7 +3658,8 @@ pub fn document_area(app: &mut PdfCraftApp, index: usize, ui: &mut egui::Ui) {
         table_preview: &table_preview,
         tag,
         text_style: &text_style,
-        text_links: app.text_links,
+        // Addresses written as page text are links only while the profile lets web links open.
+        text_links: app.text_links && app.profile.external_links != Some(false),
         tool,
         units,
         unobstructed,

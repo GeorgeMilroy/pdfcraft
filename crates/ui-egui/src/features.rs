@@ -491,6 +491,91 @@ pub fn annotation_feature(subtype: &str, intent: Option<&str>, fill_sign: bool) 
     }
 }
 
+/// XFDF element names and the annotation subtypes they import as (pdfcraft-xfdf's list).
+const XFDF_SUBTYPES: [(&str, &str); 17] = [
+    ("text", "Text"),
+    ("freetext", "FreeText"),
+    ("line", "Line"),
+    ("square", "Square"),
+    ("circle", "Circle"),
+    ("polygon", "Polygon"),
+    ("polyline", "PolyLine"),
+    ("highlight", "Highlight"),
+    ("underline", "Underline"),
+    ("squiggly", "Squiggly"),
+    ("strikeout", "StrikeOut"),
+    ("stamp", "Stamp"),
+    ("caret", "Caret"),
+    ("ink", "Ink"),
+    ("fileattachment", "FileAttachment"),
+    ("sound", "Sound"),
+    ("redact", "Redact"),
+];
+
+/// PdfCraft's own XFDF attributes (`pdfcraft:keys`, where a Fill & Sign item says so).
+const PDFCRAFT_XFDF_NS: &str = "https://github.com/storytold/pdfcraft#xfdf";
+/// At most this much text in a `pdfcraft:keys` attribute is read (pdfcraft-xfdf's own limit).
+const MAX_OWN_KEYS: usize = 64 * 1024;
+
+/// Whether the XFDF element `node` (of `subtype`, with `intent`) imports as a Fill & Sign item:
+/// `pdfcraft_annot::is_fill_sign` on what pdfcraft-xfdf writes for it (`/PCFillSign` from
+/// PdfCraft's keys, the typewriter intent, a Fill & Sign stamp name, a signature drawn in ink).
+fn xfdf_fill_sign(node: roxmltree::Node<'_, '_>, subtype: &str, intent: Option<&str>) -> bool {
+    use pdfcraft_cos::Object;
+    let own = node.attribute((PDFCRAFT_XFDF_NS, "keys")).filter(|t| t.len() <= MAX_OWN_KEYS).and_then(|t| {
+        match pdfcraft_cos::Lexer::new(t.as_bytes(), 0).object() {
+            Ok(Object::Dict(d)) => Some(d),
+            _ => None,
+        }
+    });
+    let own_true = |key: &[u8]| own.as_ref().is_some_and(|d| matches!(d.get(key), Some(Object::Bool(true))));
+    if own_true(b"PCFillSign") {
+        return true;
+    }
+    if subtype == "FreeText" && intent == Some("FreeTextTypeWriter") {
+        return true;
+    }
+    if subtype == "Stamp" {
+        let name = node.attribute("icon");
+        if matches!(name, Some("PCCheck" | "PCCross" | "PCDot" | "PCLine" | "PCTypedSignature")) {
+            return true;
+        }
+        if matches!(name, Some("PCCustomSignature" | "PCCustomInitials")) && own_true(b"PCPictureImage") {
+            return true;
+        }
+    }
+    // The subject as pdfcraft reads it back: trimmed.
+    subtype == "Ink" && node.attribute("subject").map(|s| s.trim_matches('\0').trim()) == Some("Signature")
+}
+
+/// The features the comments in an XFDF text become once imported: each by the kind it imports
+/// as, as [`annotation_feature`] gives it for a comment on the page. A reply too: a pasted one
+/// whose comment isn't pasted with it stands alone. `None` when the text can't be read as XFDF.
+pub fn xfdf_features(text: &str) -> Option<FeatureSet> {
+    let options = roxmltree::ParsingOptions { allow_dtd: false, nodes_limit: 2_000_000, ..Default::default() };
+    let xml = roxmltree::Document::parse_with_options(text, options).ok()?;
+    let root = xml.root_element();
+    if root.tag_name().name() != "xfdf" {
+        return None;
+    }
+    let mut set = FeatureSet::empty();
+    let Some(annots) = root.children().find(|c| c.has_tag_name("annots")) else { return Some(set) };
+    for node in annots.children().filter(|c| c.is_element()) {
+        let tag = node.tag_name().name().to_ascii_lowercase();
+        let Some(subtype) = XFDF_SUBTYPES.iter().find(|(t, _)| *t == tag).map(|(_, s)| *s) else { continue };
+        // As pdfcraft-xfdf reads it: `intent`, else `IT`.
+        let intent = node.attribute("intent").filter(|i| !i.is_empty()).or_else(|| node.attribute("IT").filter(|i| !i.is_empty()));
+        let fill_sign = xfdf_fill_sign(node, subtype, intent);
+        // PdfCraft makes Fill & Sign items of ink, text boxes and stamps only: another kind that
+        // says it is one (PdfCraft's keys travel with any kind) needs its own kind's feature too.
+        if fill_sign && !matches!(subtype, "Ink" | "FreeText" | "Stamp") {
+            set.insert(annotation_feature(subtype, intent, false));
+        }
+        set.insert(annotation_feature(subtype, intent, fill_sign));
+    }
+    Some(set)
+}
+
 /// Whether every change `edit` makes is allowed: `allowed` says which features are on, and
 /// `annotation` gives the feature of the existing annotation at (page, index), if any.
 pub fn edit_allowed(edit: &Edit, allowed: &dyn Fn(Feature) -> bool, annotation: &dyn Fn(usize, usize) -> Option<Feature>) -> bool {
@@ -516,6 +601,8 @@ pub fn edit_allowed(edit: &Edit, allowed: &dyn Fn(Feature) -> bool, annotation: 
         | Edit::SetAnnotationInfo { page, index, .. } => existing(*page, *index),
         // Replies and review status are part of a comment thread, on any annotation.
         Edit::ReplyToAnnotation { .. } | Edit::SetAnnotationStatus { .. } => allowed(Comments),
+        // Pasted comments are comments, each also of its kind (`xfdf_features`).
+        Edit::PasteComments { xfdf, .. } => allowed(Comments) && xfdf_features(xfdf).is_some_and(|kinds| kinds.iter().all(allowed)),
         other => allowed(simple_edit_feature(other)),
     }
 }
@@ -565,7 +652,7 @@ fn simple_edit_feature(edit: &Edit) -> Feature {
         Edit::ReplaceText { .. } => Markup,
         // Comment data (XFDF, FDF); form data is gated by its command (form.import_data). Pasted
         // comments are XFDF too.
-        Edit::ImportData { .. } | Edit::PasteComments { .. } => Comments,
+        Edit::ImportData { .. } => Comments,
         Edit::SetFieldValue { .. } | Edit::ResetForm { .. } | Edit::SetFieldImage { .. } | Edit::XfaEvent { .. } => FormFill,
         Edit::AddField { .. }
         | Edit::SetFieldProps { .. }
@@ -629,6 +716,7 @@ fn simple_edit_feature(edit: &Edit) -> Feature {
         | Edit::DeleteAnnotation { .. }
         | Edit::SetAnnotationContents { .. }
         | Edit::ReplyToAnnotation { .. }
+        | Edit::PasteComments { .. }
         | Edit::SetAnnotationStatus { .. }
         | Edit::EraseInk { .. }
         | Edit::MarkAnnotation { .. }
@@ -718,6 +806,31 @@ mod tests {
         assert_eq!(edit_features(&paste, &ink_at), [Comments].into_iter().collect());
         let hairlines = Edit::FixHairlines { pages: vec![0], settings: pdfcraft_engine::Hairlines::default() };
         assert_eq!(edit_features(&hairlines, &ink_at), [EditContent].into_iter().collect());
+    }
+
+    #[test]
+    fn pasted_xfdf_comments_need_their_kinds() {
+        let xfdf = r#"<?xml version="1.0"?><xfdf xmlns="http://ns.adobe.com/xfdf/"><annots><square page="0" rect="0,0,10,10" name="a"/><text page="0" rect="0,0,10,10" name="b" inreplyto="a"/><ink page="0" rect="0,0,1,1" name="c"/></annots></xfdf>"#;
+        let set = xfdf_features(xfdf).expect("reads");
+        assert!(set.contains(Shapes) && set.contains(Ink) && set.contains(Comments), "the square, the ink and the reply");
+        assert!(!set.contains(Markup) && !set.contains(Redaction));
+        // A "reply" whose comment isn't pasted with it stands alone, as its own kind.
+        let lone = r#"<xfdf xmlns="http://ns.adobe.com/xfdf/"><annots><square page="0" rect="0,0,10,10" name="s" inreplyto="gone"/></annots></xfdf>"#;
+        assert!(xfdf_features(lone).expect("reads").contains(Shapes));
+        // PdfCraft's standard stamps are stamps; its check mark is a Fill & Sign item.
+        let stamp =
+            |icon: &str| xfdf_features(&format!(r#"<xfdf><annots><stamp page="0" rect="0,0,10,10" icon="{icon}"/></annots></xfdf>"#)).expect("reads");
+        assert!(stamp("PCVoid").contains(Stamps) && !stamp("PCVoid").contains(FillSign));
+        assert!(stamp("PCCheck").contains(FillSign) && !stamp("PCCheck").contains(Stamps));
+        let keyed = r#"<xfdf xmlns:pdfcraft="https://github.com/storytold/pdfcraft#xfdf"><annots><freetext page="0" rect="0,0,10,10" pdfcraft:keys="&lt;&lt; /PCFillSign  true &gt;&gt;"/></annots></xfdf>"#;
+        assert!(xfdf_features(keyed).expect("reads").contains(FillSign), "PdfCraft's keys, however spaced");
+        let ink = r#"<xfdf><annots><ink page="0" rect="0,0,10,10" subject=" Signature "/></annots></xfdf>"#;
+        assert!(xfdf_features(ink).expect("reads").contains(FillSign), "the subject trimmed, as it is read back");
+        // Another kind that carries PdfCraft's Fill & Sign key still needs its own kind's feature.
+        let marked = r#"<xfdf xmlns:pdfcraft="https://github.com/storytold/pdfcraft#xfdf"><annots><redact page="0" rect="0,0,10,10" pdfcraft:keys="&lt;&lt; /PCFillSign true &gt;&gt;"/></annots></xfdf>"#;
+        assert!(xfdf_features(marked).expect("reads").contains(Redaction));
+        assert_eq!(xfdf_features("<notxfdf/>"), None);
+        assert_eq!(xfdf_features("not xml"), None);
     }
 
     #[test]

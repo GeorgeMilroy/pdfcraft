@@ -174,7 +174,8 @@ pub(crate) fn context_menu(
                 ui.separator();
             }
             let copy_key = crate::commands::shortcut_label(ui.ctx(), crate::commands::COPY);
-            if copies && ui.add(egui::Button::new(tl!(if several > 0 { "Copy comments" } else { "Copy comment" })).shortcut_text(copy_key)).clicked() {
+            if copies && ui.add(egui::Button::new(tl!(if several > 0 { "Copy comments" } else { "Copy comment" })).shortcut_text(copy_key)).clicked()
+            {
                 view.comments.copy_request = true;
                 ui.close();
             }
@@ -224,7 +225,7 @@ pub(crate) fn context_menu(
     // or reviewed pages whose comments should no longer move. Only where the profile allows it.
     if !info.annotations.is_empty() && gate.profile.allows_id("comment.flatten") {
         ui.separator();
-        if ui.add_enabled(can_modify, egui::Button::new(tl!("Flatten comments"))).clicked() {
+        if ui.add_enabled(gate.can_modify, egui::Button::new(tl!("Flatten comments"))).clicked() {
             view.comments.select(None);
             action = Some(CanvasAction::Edit(Box::new(Edit::Flatten { comments: true, fields: false })));
             ui.close();

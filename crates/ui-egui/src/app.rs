@@ -586,6 +586,19 @@ impl eframe::App for PdfCraftApp {
 }
 
 impl PdfCraftApp {
+    /// A view-only profile keeps the Read workspace, and no tool that changes the document.
+    fn keep_read_only(&mut self) {
+        if !self.profile.read_only {
+            return;
+        }
+        if self.mode != Mode::Read {
+            self.switch_mode(Mode::Read, false);
+        }
+        if !matches!(self.quick_tool, QuickTool::Select | QuickTool::Hand | QuickTool::MarqueeZoom | QuickTool::Snapshot | QuickTool::ColumnSelect) {
+            self.quick_tool = QuickTool::Select;
+        }
+    }
+
     fn logic_unguarded(&mut self, ctx: &egui::Context) {
         #[cfg(test)]
         self.injected_panic(crate::frame_guard::FramePart::Logic);
@@ -600,18 +613,7 @@ impl PdfCraftApp {
         // Form date fields name months in the date language (Preferences ▸ Date format), which
         // follows the interface language until one is picked (#5303).
         pdfcraft_engine::dates::use_form_date_language(self.session.date_language().unwrap_or(lang.code()));
-        if self.profile.read_only {
-            // View only: the Read workspace, and no tool that changes the document.
-            if self.mode != Mode::Read {
-                self.switch_mode(Mode::Read, false);
-            }
-            if !matches!(
-                self.quick_tool,
-                QuickTool::Select | QuickTool::Hand | QuickTool::MarqueeZoom | QuickTool::Snapshot | QuickTool::ColumnSelect
-            ) {
-                self.quick_tool = QuickTool::Select;
-            }
-        }
+        self.keep_read_only();
         // Whatever set it (the control channel, a host assigning the profile), nothing the
         // profile refuses stays open or armed, and what is drawn this frame reads this profile.
         self.enforce_profile();

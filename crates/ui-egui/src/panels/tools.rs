@@ -319,8 +319,11 @@ fn tool_detail(app: &mut PdfCraftApp, ui: &mut egui::Ui, t: &Tokens, g: &'static
                 run = Some(cmd);
             }
             // Where the signing happens, not only in Preferences, and once: not also in the Sign
-            // menu over the page, where it was easy to miss (#2149).
-            ui.add(widgets::checkbox(&mut app.flatten_fill_sign_on_save, tl!("Lock into the page when saving")));
+            // menu over the page, where it was easy to miss (#2149). Locking is flattening, which
+            // the profile may refuse.
+            if app.profile.allows_feature(Feature::Flatten) {
+                ui.add(widgets::checkbox(&mut app.flatten_fill_sign_on_save, tl!("Lock into the page when saving")));
+            }
         }
     });
     if footer {

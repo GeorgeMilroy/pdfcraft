@@ -833,8 +833,11 @@ fn card_documents_and_view(ui: &mut egui::Ui, app: &mut PdfCraftApp, t: &Tokens,
         let defaults = app.view_defaults;
         apply_view_pref_changes(&mut app.views[i], &defaults, ViewPrefChanges { always_reset: false, ..changes });
     }
-    ctx.checkbox(ui, &mut app.text_links, tl!("Open web and email addresses written in the page text"), t);
-    ctx.label_secondary(ui, tl!("Only web (http, https) and email addresses open, and PdfCraft asks first, as for other links."), t);
+    // Not while the profile turns document links off: then no address opens anyway.
+    if app.profile.external_links != Some(false) {
+        ctx.checkbox(ui, &mut app.text_links, tl!("Open web and email addresses written in the page text"), t);
+        ctx.label_secondary(ui, tl!("Only web (http, https) and email addresses open, and PdfCraft asks first, as for other links."), t);
+    }
     ui.add_space(6.0);
 
     ui.horizontal(|ui| {
@@ -889,12 +892,15 @@ fn card_identity(ui: &mut egui::Ui, app: &mut PdfCraftApp, t: &Tokens, ctx: &mut
 
 /// Content for Card 5: Fill & Sign
 fn card_fill_and_sign(ui: &mut egui::Ui, app: &mut PdfCraftApp, t: &Tokens, ctx: &mut PrefSearchContext) {
-    ctx.checkbox(ui, &mut app.flatten_fill_sign_on_save, tl!("Flatten Fill & Sign when saving"), t);
-    ui.add_enabled_ui(!app.flatten_fill_sign_on_save, |ui| {
-        ctx.checkbox(ui, &mut app.ask_to_lock_signatures, tl!("Otherwise, ask on the first save after a signature is placed"), t);
-    });
-    ctx.label_secondary(ui, tl!("Text, marks and signatures become part of the page. Other comments stay editable."), t);
-    ui.add_space(8.0);
+    // Locking marks into the page is flattening, which the profile may refuse.
+    if app.profile.allows_feature(Feature::Flatten) {
+        ctx.checkbox(ui, &mut app.flatten_fill_sign_on_save, tl!("Flatten Fill & Sign when saving"), t);
+        ui.add_enabled_ui(!app.flatten_fill_sign_on_save, |ui| {
+            ctx.checkbox(ui, &mut app.ask_to_lock_signatures, tl!("Otherwise, ask on the first save after a signature is placed"), t);
+        });
+        ctx.label_secondary(ui, tl!("Text, marks and signatures become part of the page. Other comments stay editable."), t);
+        ui.add_space(8.0);
+    }
     date_format(ui, app, t, ctx);
 }
 

@@ -166,8 +166,10 @@ fn view_action_command(action: &crate::canvas::ViewAction) -> Option<&'static st
         A::PastePages => "page.paste",
         // Enhancing changes the page through the session, not an edit the profile could refuse.
         A::EnhanceCamera | A::CameraLevel => "ocr.enhance_camera",
+        A::Replace { .. } => "edit.replace",
         // Turning applies an edit, and the next command runs through `execute`: both are gated.
-        A::CancelCamera | A::CameraRotate { .. } | A::CameraNext(_) => return None,
+        // Locking signatures checks the flatten feature where it runs.
+        A::CancelCamera | A::CameraRotate { .. } | A::CameraNext(_) | A::LockSignatures => return None,
     })
 }
 
@@ -1097,7 +1099,8 @@ impl PdfCraftApp {
     /// When the preference is on, bake Fill & Sign marks before the bytes are written.
     /// Returns false when the document is not allowed to change (nothing is written).
     fn flatten_fill_sign_for_save(&mut self, id: pdfcraft_engine::DocId) -> bool {
-        if !self.flatten_fill_sign_on_save {
+        // A profile that refuses flattening saves the marks as they are, whatever the preference.
+        if !self.flatten_fill_sign_on_save || !self.profile.allows_feature(crate::features::Feature::Flatten) {
             return true;
         }
         let before = self.session.get(id).map(|d| d.edit_generation());

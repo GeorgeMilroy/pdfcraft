@@ -109,7 +109,7 @@ impl PdfCraftApp {
             return;
         }
         if !pastes.is_empty() {
-            self.receive_pastes(i, pastes, images);
+            self.receive_pastes(i, pastes, true);
             return;
         }
         if paste {
@@ -228,7 +228,8 @@ impl PdfCraftApp {
                         self.paste_comment_text(view, text);
                     }
                 }
-                ClipboardPaste::Image(image) if on_canvas => {
+                // A picture lands on the page only where the profile allows image editing.
+                ClipboardPaste::Image(image) if on_canvas && self.profile.allows_id("edit.image") => {
                     self.paste_received_image(page, &image);
                 }
                 ClipboardPaste::Image(_) => {}
@@ -250,8 +251,12 @@ impl PdfCraftApp {
 
     /// Copy the selected comments of tab `i` as XFDF, each with its replies: into the app's
     /// clipboard (for ⌘V in any tab or window) and onto the system clipboard as text. False
-    /// when nothing is selected.
+    /// when nothing is selected or the profile refuses it.
     pub fn copy_selected_comments(&mut self, i: usize) -> bool {
+        // A profile that refuses copying comments leaves ⌘C to the page's text.
+        if !self.profile.allows_id("comment.copy") {
+            return false;
+        }
         let Some(view) = self.views.get(i) else { return false };
         let keys = view.comments.selection();
         if keys.is_empty() {
@@ -280,6 +285,10 @@ impl PdfCraftApp {
     /// and a bundle from a large page goes where it fits on a small one. The copies are selected
     /// once placed (see `apply_edit`).
     pub fn paste_comments(&mut self, i: usize, text: Option<String>, at: Option<(usize, [f64; 2])>) -> bool {
+        // Every way in (⌘V, a pasted XFDF text, the menus) comes here.
+        if !self.profile.allows_id("comment.paste") {
+            return false;
+        }
         let Some(xfdf) = text.or_else(|| self.comment_clipboard.as_ref().map(|c| c.xfdf.clone())) else {
             self.notify_tr("Copy comments first");
             return false;
@@ -289,6 +298,12 @@ impl PdfCraftApp {
         let Some(doc) = self.session.get(id) else { return false };
         if !doc.allows_annotation() {
             self.notify_tr("The document's security settings don't allow this change");
+            return false;
+        }
+        // Each pasted comment is one of its kind: the profile must allow every kind's feature, as
+        // for drawing one (a text it can't read pastes nothing).
+        if crate::features::xfdf_features(&xfdf).is_none_or(|kinds| kinds.iter().any(|f| !self.profile.allows_feature(f))) {
+            self.notify(tl!("Not allowed"));
             return false;
         }
         let count = pdfcraft_engine::comment_count(&xfdf);

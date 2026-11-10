@@ -746,7 +746,15 @@ impl Gestures<'_> {
 /// Delete / Escape handling for comments (only while no text field has focus, and nothing is over
 /// the pages). Delete leaves a locked comment, and does nothing while a selected comment's kind is
 /// one the profile refuses.
-pub(crate) fn keys(ctx: &egui::Context, keys: PageKeys, view: &mut DocView, info: &DocInfo, tool: &mut QuickTool, allowed: bool, profile: &UiProfile) {
+pub(crate) fn keys(
+    ctx: &egui::Context,
+    keys: PageKeys,
+    view: &mut DocView,
+    info: &DocInfo,
+    tool: &mut QuickTool,
+    allowed: bool,
+    profile: &UiProfile,
+) {
     if ctx.egui_wants_keyboard_input() {
         return;
     }
@@ -762,7 +770,8 @@ pub(crate) fn keys(ctx: &egui::Context, keys: PageKeys, view: &mut DocView, info
             *tool = QuickTool::Select;
         }
     }
-    let refused = |(page, index): (usize, usize)| info.annotations.iter().any(|a| a.page == page && a.index == index && !profile.allows_feature(feature_of(a)));
+    let refused =
+        |(page, index): (usize, usize)| info.annotations.iter().any(|a| a.page == page && a.index == index && !profile.allows_feature(feature_of(a)));
     if allowed
         && cv.selected.is_some()
         && !cv.selection().into_iter().chain(cv.target()).any(refused)

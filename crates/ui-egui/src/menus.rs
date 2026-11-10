@@ -390,8 +390,9 @@ impl PdfCraftApp {
 
     /// Whether the profile ([`crate::profile::UiProfile`]) lets a menu item show, and the brand
     /// its community links. Menu-only items follow what they do: Cut and Paste are the page
-    /// grid's, Delete removes what is selected (each removal is checked again where it happens),
-    /// and the zoom and view rotation keys belong to the viewer.
+    /// grid's and, in Edit a PDF, the selected objects' (content editing), Delete removes what is
+    /// selected (each removal is checked again where it happens), and the zoom and view rotation
+    /// keys belong to the viewer.
     fn menu_allows(&self, id: &str) -> bool {
         let profile = &self.profile;
         // A white-label brand may leave the community links out of Help (crate::brand).
@@ -399,8 +400,8 @@ impl PdfCraftApp {
             return false;
         }
         match id {
-            CUT => profile.allows_id("page.cut"),
-            PASTE => profile.allows_id("page.paste"),
+            CUT => profile.allows_id("page.cut") || profile.allows_id("edit.edit_text"),
+            PASTE => profile.allows_id("page.paste") || profile.allows_id("edit.edit_text"),
             DELETE => !profile.read_only && profile.features.is_none_or(|f| f.edits()),
             NO_RECENT => profile.allows_id("file.open_recent"),
             SELECT_ALL => true,
