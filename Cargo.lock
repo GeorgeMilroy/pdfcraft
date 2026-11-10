@@ -5105,6 +5105,7 @@ dependencies = [
  "craft-quit",
  "craft-ui",
  "craft-update",
+ "craft-xml 0.1.0 (git+https://github.com/storytold/craft-libs?rev=e2dc681a3)",
  "edit-session",
  "eframe",
  "egui",

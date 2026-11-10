@@ -37,9 +37,14 @@ pub(crate) fn page_input(ui: &egui::Ui, resp: &egui::Response, xf: &PageXform, p
         view.area_pick = None;
     }
     // The area just copied stays outlined, with what can be done with it underneath.
+    // Printing the area is printing; saving it as a picture is exporting an image. What the
+    // profile refuses is not offered, and with neither there is no menu.
+    let profile = crate::dialogs::frame_profile(ui.ctx());
+    let (print_on, save_on) = (profile.allows_id("print.dialog"), profile.allows_id("export.image"));
     if let Some((p, area)) = view.area_pick
         && p == page
         && view.marquee.is_none()
+        && (print_on || save_on)
     {
         let r = xf.view_rect(area);
         ui.painter().rect_stroke(r, CornerRadius::ZERO, Stroke::new(1.5, Color32::from_rgb(0x14, 0x73, 0xE6)), egui::StrokeKind::Middle);
@@ -49,10 +54,10 @@ pub(crate) fn page_input(ui: &egui::Ui, resp: &egui::Response, xf: &PageXform, p
             .show(ui.ctx(), |ui| {
                 egui::Frame::popup(ui.style()).show(ui, |ui| {
                     ui.horizontal(|ui| {
-                        if ui.button(tl!("Print area…")).clicked() {
+                        if print_on && ui.button(tl!("Print area…")).clicked() {
                             view.area_choice = Some(AreaChoice::Print);
                         }
-                        if ui.button(tl!("Save as image…")).clicked() {
+                        if save_on && ui.button(tl!("Save as image…")).clicked() {
                             view.area_choice = Some(AreaChoice::Save);
                         }
                     });
@@ -157,6 +162,9 @@ impl PdfCraftApp {
     /// Print ▸ Selected area: the Print dialog for only `view_rect` (page view points, y down) of
     /// `page`, sized like a page of its own (Fit to paper or Actual size).
     pub(crate) fn open_print_area(&mut self, page: usize, view_rect: [f32; 4]) {
+        if !self.profile.allows_id("print.dialog") {
+            return;
+        }
         let Some((_, id)) = self.active_ids() else { return };
         let Some(height) = self.session.get(id).and_then(|d| d.info.pages.get(page)).map(|p| f64::from(p.height)) else { return };
         self.open_print();
@@ -175,6 +183,11 @@ impl PdfCraftApp {
     /// `save_override` in tests). The last snapshot is used when it was taken of that area;
     /// otherwise (another tab snapshotted since) the area is rendered again.
     pub(crate) fn save_snapshot_image(&mut self, index: usize, page: usize, view_rect: [f32; 4]) {
+        // A picture of the area is an exported image, which the profile may refuse.
+        if !self.profile.allows_id("export.image") {
+            self.notify(tl!("Not allowed"));
+            return;
+        }
         let this_area = self.views.get(index).is_some_and(|v| self.last_snapshot_of == Some((v.id, page, view_rect)));
         let png = match self.last_snapshot.as_ref() {
             Some((w, h, pixels)) if this_area => pdfcraft_engine::export::encode_png(*w, *h, pixels),

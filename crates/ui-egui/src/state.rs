@@ -251,7 +251,8 @@ pub enum Dialog {
 impl Dialog {
     /// The commands that open this dialog; the profile must allow one of them. Empty for dialogs
     /// that finish what the app already started (recovery, overwriting a changed file, a
-    /// comment's properties).
+    /// comment's properties, an attachment's description from the Attachments panel, the
+    /// question a save asks about locking signatures), each gated where it starts.
     pub(crate) fn commands(self) -> &'static [&'static str] {
         use pdfcraft_engine::MarkKind;
         match self {
@@ -272,6 +273,7 @@ impl Dialog {
             Self::Marks(MarkKind::HeaderFooter) => &["edit.header_footer"],
             Self::Marks(MarkKind::Watermark) => &["edit.watermark"],
             Self::Marks(MarkKind::Background) => &["edit.background"],
+            Self::Marks(MarkKind::PrinterMarks) => &["prepress.marks"],
             Self::Export(export_ui::ExportKind::Image) => &["export.image"],
             Self::Export(export_ui::ExportKind::Text) => &["export.text"],
             Self::Export(export_ui::ExportKind::AllImages) => &["export.all_images"],
@@ -304,7 +306,11 @@ impl Dialog {
             Self::CreateStamp => &["comment.stamp"],
             Self::AltText => &["a11y.alt_text"],
             Self::CertificateViewer => &["sign.panel"],
-            Self::CommentProps | Self::Recovery | Self::OverwriteChanged => &[],
+            Self::PrinterMarks => &["prepress.marks"],
+            Self::ConvertColours => &["prepress.convert_colors"],
+            Self::FixHairlines => &["prepress.hairlines"],
+            Self::EnhanceScan => &["ocr.enhance"],
+            Self::CommentProps | Self::Recovery | Self::OverwriteChanged | Self::AttachmentDescription | Self::LockSignatures => &[],
         }
     }
 }

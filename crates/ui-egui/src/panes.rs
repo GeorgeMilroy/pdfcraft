@@ -449,7 +449,8 @@ impl PdfCraftApp {
                     TabDrop::Strip
                 }
             }
-            None if pos.x >= page.center().x => TabDrop::SplitRight,
+            // A profile that refuses split view keeps the drop on the strip.
+            None if pos.x >= page.center().x && self.profile.allows_id("view.split") => TabDrop::SplitRight,
             None => TabDrop::Strip,
         }
     }
@@ -638,5 +639,18 @@ mod tests {
         assert!(a.height() <= 600.0 * 0.85 + 1.0 && b.height() > 0.0, "a fraction past the end is held back");
         let (a, _, _) = layout(area, Split { down: false, fraction: f32::NAN });
         assert_eq!(a.width(), 500.0, "a fraction that isn't a number shares evenly");
+    }
+
+    #[test]
+    fn a_profile_without_split_view_keeps_a_dropped_tab_on_its_strip() {
+        let mut app = PdfCraftApp::new();
+        app.panes.page_rect = Some(Rect::from_min_size(egui::pos2(0.0, 0.0), vec2(1000.0, 600.0)));
+        let right = egui::pos2(900.0, 300.0);
+        assert_eq!(app.drop_target(right, Place::Main), TabDrop::SplitRight, "the default profile splits right");
+        app.profile = crate::profile::UiProfile { hidden: ["view.split".to_string()].into_iter().collect(), ..Default::default() };
+        assert_eq!(app.drop_target(right, Place::Main), TabDrop::Strip);
+        let without_app = crate::features::Feature::ALL.into_iter().filter(|f| *f != crate::features::Feature::App).collect();
+        app.profile = crate::profile::UiProfile { features: Some(without_app), ..Default::default() };
+        assert_eq!(app.drop_target(right, Place::Main), TabDrop::Strip, "nor without the app feature");
     }
 }

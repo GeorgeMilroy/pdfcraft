@@ -344,16 +344,18 @@ fn tab_menu(app: &PdfCraftApp, ui: &mut egui::Ui, index: usize, action: &mut Opt
         return;
     }
     ui.separator();
-    // Split view (view.split-window).
-    if ui.button(tl!("Split right")).clicked() {
-        *action = Some(Action::Split { tab, down: false });
-        ui.close();
+    // Split view (view.split-window), when the profile allows its command.
+    if app.profile.allows_id("view.split") {
+        if ui.button(tl!("Split right")).clicked() {
+            *action = Some(Action::Split { tab, down: false });
+            ui.close();
+        }
+        if ui.button(tl!("Split down")).clicked() {
+            *action = Some(Action::Split { tab, down: true });
+            ui.close();
+        }
+        ui.separator();
     }
-    if ui.button(tl!("Split down")).clicked() {
-        *action = Some(Action::Split { tab, down: true });
-        ui.close();
-    }
-    ui.separator();
     let reveal = cfg!(not(target_arch = "wasm32")) && app.session.get(id).is_some_and(|d| d.path.is_some());
     let label = if cfg!(target_os = "macos") { tl!("Reveal in Finder") } else { tl!("Reveal in File Explorer") };
     if ui.add_enabled(reveal, egui::Button::new(label)).clicked() {
@@ -659,10 +661,11 @@ pub fn mode_bar(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
                 // A view-only profile keeps the Read workspace: no other workspace to switch to; and a
                 // workspace whose tool group the profile hides has no tab.
                 let show_modes = !app.profile.read_only && !app.profile.hides(crate::profile::parts::MODE_TABS);
-                let modes: Vec<(Mode, &str)> = [(Mode::AllTools, "All tools"), (Mode::Edit, "Edit"), (Mode::Convert, "Convert"), (Mode::Sign, "E-Sign")]
-                    .into_iter()
-                    .filter(|(mode, _)| show_modes && mode.tool_group().is_none_or(|id| app.shows_tool_group(id)))
-                    .collect();
+                let modes: Vec<(Mode, &str)> =
+                    [(Mode::AllTools, "All tools"), (Mode::Edit, "Edit"), (Mode::Convert, "Convert"), (Mode::Sign, "E-Sign")]
+                        .into_iter()
+                        .filter(|(mode, _)| show_modes && mode.tool_group().is_none_or(|id| app.shows_tool_group(id)))
+                        .collect();
                 // What the right side needs (three 32 px buttons, gaps) and the least search box worth showing.
                 let avail = ui.available_width();
                 let tabs_w: f32 = modes.iter().map(|(_, l)| widgets::mode_tab_width(ui, tl!(*l))).sum::<f32>() + 2.0 * (modes.len() as f32 - 1.0);

@@ -195,18 +195,35 @@ fn palette(color: Color32) -> Palette {
 
 /// What a pop-up window's parts share as they draw.
 struct Parts<'v> {
+    /// The document allows commenting.
     allowed: bool,
+    /// What the host lets the interface do: a comment's text changes only where it allows the
+    /// comment's kind, and replies are the comments feature's.
+    profile: &'v crate::profile::UiProfile,
     author: &'v str,
     pal: Palette,
     cv: &'v mut super::state::CommentView,
     edits: &'v mut Vec<Edit>,
 }
 
+impl Parts<'_> {
+    /// Whether `a`'s text may change here: the document allows commenting and the profile `a`'s
+    /// kind.
+    fn changes(&self, a: &Annotation) -> bool {
+        self.allowed && self.profile.allows_feature(super::state::feature_of(a))
+    }
+
+    /// Whether replies may be added: the document allows commenting and the profile comments.
+    fn replies(&self) -> bool {
+        self.allowed && self.profile.allows_feature(crate::features::Feature::Comments)
+    }
+}
+
 /// One comment's or reply's text in its box, typed in place (saved when the box loses focus);
-/// read-only when comments can't be changed or it is locked.
+/// read-only when comments can't be changed, the profile refuses its kind, or it is locked.
 fn text_box(ui: &mut egui::Ui, parts: &mut Parts<'_>, a: &Annotation, name: &str) {
     let key = (a.page, a.index);
-    if parts.allowed && !a.locked {
+    if parts.changes(a) && !a.locked {
         let typed = parts.cv.popup_text.as_ref().filter(|(p, i, _)| (*p, *i) == key).map(|(_, _, s)| s.clone());
         let mut text = typed.unwrap_or_else(|| a.contents.clone().unwrap_or_default());
         let field = ui
@@ -246,7 +263,7 @@ fn footer(ui: &mut egui::Ui, parts: &mut Parts<'_>, a: &Annotation) {
     // Small buttons, as the readers' footers have.
     ui.spacing_mut().button_padding = egui::vec2(6.0, 1.0);
     let mut opened = false;
-    if parts.allowed {
+    if parts.replies() {
         ui.horizontal(|ui| {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 let label = egui::RichText::new(tl!("Reply")).font(theme::regular(11.0)).color(parts.pal.ink);
@@ -339,6 +356,8 @@ fn reply_panel(ui: &mut egui::Ui, parts: &mut Parts<'_>, nodes: &[(&Annotation, 
 /// a click both saves typed text and closes). Hidden comments show none.
 pub(crate) fn popups(ctx: &egui::Context, view: &mut DocView, info: &DocInfo, prefs: &CommentPrefs, hidden: bool, allowed: bool) -> Option<Edit> {
     let pointer = ctx.input(|i| i.pointer.hover_pos());
+    let profile = crate::dialogs::frame_profile(ctx);
+    let doc_allowed = allowed;
     let mut edits: Vec<Edit> = Vec::new();
     let mut rects = Vec::new();
     let mut hovered = None;
@@ -350,6 +369,9 @@ pub(crate) fn popups(ctx: &egui::Context, view: &mut DocView, info: &DocInfo, pr
             info.annotations.iter().filter(|a| !hidden && a.page == page && has_popup(a) && a.popup.is_some_and(|p| p.open)).cloned().collect();
         for a in shown {
             let Some(p) = a.popup else { continue };
+            // Closing, moving and resizing the window change the comment: only where the profile
+            // allows its kind.
+            let allowed = doc_allowed && profile.allows_feature(super::state::feature_of(&a));
             let key = (page, a.index);
             let placed = xf.user_rect(info, page, p.rect);
             // Its place follows the page; its size is the pop-up's `/Rect` in points on screen,
@@ -378,6 +400,7 @@ pub(crate) fn popups(ctx: &egui::Context, view: &mut DocView, info: &DocInfo, pr
                     tool: QuickTool::Select,
                     prefs: &CommentPrefs::default(),
                     allowed,
+                    profile: &profile,
                     hidden,
                     redact_mark: ([0.0; 3], 1.0),
                     keys: PageKeys::new(true),
@@ -477,7 +500,8 @@ pub(crate) fn popups(ctx: &egui::Context, view: &mut DocView, info: &DocInfo, pr
                     holder.locked |= a.locked;
                     let order = thread(key, &replies);
                     let (nodes, roots) = nest(&order);
-                    let mut parts = Parts { allowed, author: &prefs.author, pal, cv: &mut view.comments, edits: &mut edits };
+                    let mut parts =
+                        Parts { allowed: doc_allowed, profile: &profile, author: &prefs.author, pal, cv: &mut view.comments, edits: &mut edits };
                     // The body keeps the window's height: the text and replies scroll in what the
                     // title bar leaves, with a bar that shows whenever there is more (egui's show
                     // only near the pointer), in the ink's colour.
