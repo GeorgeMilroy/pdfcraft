@@ -817,6 +817,10 @@ mod tests {
         assert_eq!(edit_features(&paste, &ink_at), [Comments].into_iter().collect());
         let hairlines = Edit::FixHairlines { pages: vec![0], settings: pdfcraft_engine::Hairlines::default() };
         assert_eq!(edit_features(&hairlines, &ink_at), [EditContent].into_iter().collect());
+        // A picture for the exact image field clicked fills the form, as SetFieldImage does.
+        let object = pdfcraft_cos::ObjRef { num: 4, generation: 0 };
+        let picture = Edit::SetFieldImageTarget { name: "photo".into(), object, image: std::sync::Arc::new(Vec::new()) };
+        assert_eq!(edit_features(&picture, &ink_at), [FormFill].into_iter().collect());
     }
 
     #[test]

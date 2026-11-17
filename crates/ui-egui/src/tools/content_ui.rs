@@ -1124,8 +1124,14 @@ impl crate::PdfCraftApp {
         let Some((_, id)) = self.active_ids() else { return };
         self.choose_field_image_target(id, name, None);
     }
-    /// Keep the clicked document and field identity through the asynchronous image picker.
+    /// Keep the clicked document and field identity through the asynchronous image picker. A
+    /// picture fills the form: refused without that feature, before picking and again when the
+    /// picture is applied (it is applied to the clicked document, not through `apply_edit`).
     pub fn choose_field_image_target(&mut self, id: pdfcraft_engine::DocId, name: &str, identity: Option<u64>) {
+        if !self.profile.allows_feature(crate::features::Feature::FormFill) {
+            self.notify(tl!("Not allowed"));
+            return;
+        }
         if identity.is_some_and(|key| key >= 1u64 << 48) {
             self.notify("The selected image field identity is invalid");
             return;
@@ -1146,8 +1152,15 @@ impl crate::PdfCraftApp {
                     }
                     None => Edit::SetFieldImage { name, image },
                 };
+                if !app.profile.allows_edit(&edit) {
+                    app.notify(tl!("Not allowed"));
+                    return;
+                }
+                // Logged as apply_edit logs its edits, so undoing it is judged as theirs are.
+                let (label, used) = (edit.label(), crate::features::edit_features(&edit, &|_, _| None));
                 match app.session.apply(id, edit) {
                     Ok(_) => {
+                        app.edit_log.entry(id).or_default().applied(label.as_str(), used);
                         if let Some(view) = app.views.iter_mut().find(|v| v.id == id)
                             && let Some(doc) = app.session.get(id)
                         {

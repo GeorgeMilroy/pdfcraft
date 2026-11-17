@@ -441,7 +441,8 @@ impl SelectionAction {
     /// The command whose availability in the profile shows the action.
     fn command(self) -> &'static str {
         match self {
-            Self::Note => "comment.note",
+            // A highlight carrying the note (ComposerKind::TextNote), so Markup's command.
+            Self::Note => "comment.highlight",
             Self::Markup(tool) => tool.command(),
             Self::Replace => "comment.replace",
             Self::Copy => "edit.copy",

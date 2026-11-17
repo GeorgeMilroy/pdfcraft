@@ -253,5 +253,8 @@ fn the_selection_bar_shows_only_the_actions_the_profile_allows() {
     };
     // Highlight is on the quick bar too.
     assert_eq!(bar(UiProfile::default()), (2, 1, 1));
-    assert_eq!(bar(hiding(&["comment.highlight", "edit.copy"])), (0, 0, 1));
+    // Add comment makes a highlight carrying the note: it answers to comment.highlight.
+    assert_eq!(bar(hiding(&["comment.highlight", "edit.copy"])), (0, 0, 0));
+    assert_eq!(bar(hiding(&["comment.note"])), (2, 1, 1));
+    assert_eq!(bar(without(&[Feature::Markup])), (0, 1, 0));
 }

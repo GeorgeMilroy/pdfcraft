@@ -873,12 +873,15 @@ pub(crate) fn nudge_keys(ctx: &egui::Context, keys: PageKeys, view: &mut DocView
     let (dx, dy) = (b[0] - a[0], b[1] - a[1]);
     if dx.is_finite() && dy.is_finite() && (dx != 0.0 || dy != 0.0) {
         // Match a pointer drag: move the eligible selection on this page as one undo step.
-        // Text markup and locked comments cannot be moved and would reject a batch.
+        // Text markup and locked comments cannot be moved and would reject a batch, and nor can
+        // kinds the profile refuses: those stay where they are.
         let mut indices = vec![index];
         for &(other_page, other_index) in &view.comments.also {
             if other_page == page
                 && !indices.contains(&other_index)
-                && info.annotations.iter().any(|a| a.page == page && a.index == other_index && !a.is_reply() && !on_text(a) && !a.locked)
+                && info.annotations.iter().any(|a| {
+                    a.page == page && a.index == other_index && !a.is_reply() && !on_text(a) && !a.locked && profile.allows_feature(feature_of(a))
+                })
             {
                 indices.push(other_index);
             }

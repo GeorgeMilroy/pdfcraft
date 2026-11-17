@@ -96,6 +96,9 @@ impl PdfCraftApp {
                     "The form asks to be submitted to {u}; PdfCraft doesn't send form data. Save the document to keep your entries.",
                     &[("u", &u)],
                 ),
+                // As File ▸ Save As: refused where the profile refuses file.save_as (Download off,
+                // the command hidden, or no saving at all).
+                Request::SaveAs if !self.profile.allows_id("file.save_as") => self.notify(tl!("Not allowed")),
                 Request::SaveAs => {
                     if let Some(i) = view {
                         self.save_view(i, crate::SaveTarget::As);
@@ -326,6 +329,12 @@ impl PdfCraftApp {
     /// as a link's is (#2081).
     #[cfg(not(target_arch = "wasm32"))]
     fn request_script_document(&mut self, id: DocId, path: &str) {
+        // Another file opens in a tab of its own: not without tabs and File ▸ Open, as for a
+        // link to another PDF.
+        if !self.profile.allows_feature(Feature::App) || !self.profile.allows_id("file.open") {
+            self.notify(tl!("Not allowed"));
+            return;
+        }
         if self.pending_remote_link.is_some() || self.pending_link.is_some() {
             return;
         }
@@ -344,8 +353,13 @@ impl PdfCraftApp {
     }
 
     /// Run the JavaScript action of link `index` on page `page` (0-based; its place in the page's
-    /// annotations), clicked in document `id` (#2081). A failed script changes nothing.
+    /// annotations), clicked in document `id` (#2081). A failed script changes nothing. Refused,
+    /// as a push button's script is, when the profile leaves JavaScript out.
     pub fn run_link_script(&mut self, id: DocId, page: usize, index: usize) {
+        if !self.profile.allows_feature(Feature::JavaScript) {
+            self.notify(tl!("Not allowed"));
+            return;
+        }
         if !self.commit_form_typing() {
             return;
         }
