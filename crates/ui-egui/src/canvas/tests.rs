@@ -3561,3 +3561,60 @@ fn the_page_menu_offers_only_what_the_profile_allows() {
     // Turning the view is the viewer's: always there.
     assert!(offers.offers(&A::RotateCW) && offers.offers(&A::RotateCCW));
 }
+
+/// Review of the update to pdfcraft 0.21: Lock now is a step the profile's undo log knows, so it
+/// can be undone under a profile that limits features as without one.
+#[test]
+fn locking_fill_and_sign_marks_can_be_undone_under_a_feature_profile() {
+    use crate::profile::UiProfile;
+    for profile in [UiProfile::default(), UiProfile { features: Some(crate::features::FeatureSet::all()), ..UiProfile::default() }] {
+        let mut app = PdfCraftApp::new();
+        app.open_bytes("doc.pdf", None, text_pages_pdf(&["Sign here"])).unwrap();
+        app.set_profile(profile);
+        let id = app.views[0].id;
+        let shape = pdfcraft_engine::Shape::Mark { rect: [20.0, 20.0, 32.0, 32.0], mark: pdfcraft_engine::FillMark::Check };
+        let style = pdfcraft_engine::Style::default_for(&shape);
+        assert!(app.apply_edit(Edit::AddAnnotation(pdfcraft_engine::NewAnnotation {
+            page: 0,
+            shape,
+            style,
+            contents: String::new(),
+            author: "A".into()
+        })));
+        let marked = |app: &PdfCraftApp| app.session.get(id).unwrap().info.annotations.iter().any(|a| a.fill_sign);
+        assert!(marked(&app));
+        app.lock_signatures_now(id);
+        assert!(!marked(&app), "locked into the page; {:?}", app.toast);
+        app.undo();
+        assert!(marked(&app), "the lock is undone; {:?}", app.toast);
+    }
+}
+
+/// Review of the update to pdfcraft 0.21: a new bookmark on a document whose security refuses
+/// it runs pdfcraft's own code (rename mode, the Bookmarks panel) unless the profile refuses it.
+#[test]
+fn a_new_bookmark_on_a_document_that_refuses_it_runs_as_pdfcraft_ships() {
+    use crate::features::{Feature, FeatureSet};
+    use crate::profile::UiProfile;
+    let mut source = PdfCraftApp::new();
+    source.open_bytes("doc.pdf", None, text_pages_pdf(&["One", "Two"])).unwrap();
+    assert!(source.apply_edit(Edit::Protect(pdfcraft_engine::Protection {
+        permissions_password: Some("owner".into()),
+        changes: pdfcraft_engine::Changes::None,
+        ..Default::default()
+    })));
+    let restricted = source.session.save_bytes(source.views[0].id).unwrap().as_ref().clone();
+    let mut no_bookmarks = FeatureSet::all();
+    no_bookmarks.remove(Feature::Bookmarks);
+    for (profile, renames) in [(UiProfile::default(), true), (UiProfile { features: Some(no_bookmarks), ..UiProfile::default() }, false)] {
+        let mut app = PdfCraftApp::new();
+        app.open_bytes("restricted.pdf", None, restricted.clone()).unwrap();
+        app.set_profile(profile);
+        app.bookmark_action(crate::panels::BmAction::New);
+        assert_eq!(app.bookmark_rename.is_some(), renames, "{:?}", app.toast);
+        assert_eq!(app.right == Some(crate::RightPanel::Bookmarks), renames);
+        if !renames {
+            assert_eq!(app.toast.as_ref().map(|(t, _)| t.as_str()), Some("Not allowed"));
+        }
+    }
+}

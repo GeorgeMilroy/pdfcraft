@@ -970,7 +970,10 @@ impl PdfCraftApp {
         let skipped = found.len() - read;
         // The guard refuses a result that no longer fits its document (the user edited, or
         // redacted, while the worker was out); its reason says so.
-        match self.session.apply_ocr_checked(doc, &found, &guard) {
+        let depth = self.undo_depth(doc);
+        let applied = self.session.apply_ocr_checked(doc, &found, &guard);
+        self.log_engine_steps(doc, depth, [crate::features::Feature::Ocr].into_iter().collect());
+        match applied {
             Ok(words) => {
                 if let Some(info) = self.session.get(doc).map(|d| d.info.clone())
                     && let Some(view) = self.views.iter_mut().find(|v| v.id == doc)

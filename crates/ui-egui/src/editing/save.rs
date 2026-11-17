@@ -265,10 +265,12 @@ impl PdfCraftApp {
             return false;
         }
         let before = self.session.get(id).map(|d| d.edit_generation());
+        let depth = self.undo_depth(id);
         if let Err(e) = self.session.apply(id, pdfcraft_engine::Edit::FlattenFillSign) {
             self.notify_error(e);
             return false;
         }
+        self.log_engine_steps(id, depth, crate::features::edit_features(&pdfcraft_engine::Edit::FlattenFillSign, &|_, _| None));
         if before != self.session.get(id).map(|d| d.edit_generation())
             && let Some(doc) = self.session.get(id)
             && let Some(view) = self.views.iter_mut().find(|v| v.id == id)

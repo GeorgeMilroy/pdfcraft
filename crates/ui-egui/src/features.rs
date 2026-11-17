@@ -586,6 +586,11 @@ pub fn xfdf_features(text: &str) -> Option<FeatureSet> {
     Some(set)
 }
 
+/// A field change that only shows or hides the field (`display`), as a Hide action makes.
+fn display_only(c: &pdfcraft_engine::FieldChange) -> bool {
+    *c == pdfcraft_engine::FieldChange { name: c.name.clone(), object: c.object, display: c.display, ..Default::default() }
+}
+
 /// Whether every change `edit` makes is allowed: `allowed` says which features are on, and
 /// `annotation` gives the feature of the existing annotation at (page, index), if any.
 pub fn edit_allowed(edit: &Edit, allowed: &dyn Fn(Feature) -> bool, annotation: &dyn Fn(usize, usize) -> Option<Feature>) -> bool {
@@ -682,6 +687,8 @@ fn simple_edit_feature(edit: &Edit) -> Feature {
         | Edit::MarkDecorative { .. }
         | Edit::MarkTagArtifact { .. }
         | Edit::LayoutTableToBlocks { .. } => Accessibility,
+        // A push button's Hide action (no script) changes only whether fields show: form filling.
+        Edit::ApplyScriptChanges { changes } if changes.iter().all(display_only) => FormFill,
         Edit::SetDocumentScript { .. } | Edit::SetFieldScript { .. } | Edit::ApplyScriptChanges { .. } => JavaScript,
         Edit::ConvertPdfA { .. } | Edit::RemoveStandardId { .. } => Standards,
         Edit::AddOcrText { .. } | Edit::EnhanceScan { .. } => Ocr,

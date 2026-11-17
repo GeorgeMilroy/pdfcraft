@@ -398,7 +398,10 @@ impl PdfCraftApp {
     /// Prepare a form ▸ detect fields from the page's blanks, lines and boxes.
     pub fn detect_fields(&mut self) {
         let Some((i, id)) = self.active_ids() else { return };
-        match self.session.auto_detect_fields(id, &[]) {
+        let depth = self.undo_depth(id);
+        let detected = self.session.auto_detect_fields(id, &[]);
+        self.log_engine_steps(id, depth, [Feature::FormDesign].into_iter().collect());
+        match detected {
             Ok(names) if names.is_empty() => self.notify_tr("No form fields were detected"),
             Ok(names) => {
                 if let Some(info) = self.session.get(id).map(|d| d.info.clone()) {

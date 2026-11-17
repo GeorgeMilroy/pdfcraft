@@ -116,12 +116,12 @@ pub fn show(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
                 ui.add_space(22.0);
             }
 
-            let groups: Vec<&'static catalog::ToolGroup> = RECOMMENDED
-                .iter()
-                .filter(|id| !app.is_tool_pinned(id))
-                .filter_map(|id| catalog::group(id))
-                .filter(|g| app.shows_tool_group(g.id))
-                .collect();
+            // The recommended groups the profile offers; the heading shows with any of them, as
+            // upstream shows it however many are pinned, and pinned ones get no card here.
+            let offered: Vec<&'static catalog::ToolGroup> =
+                RECOMMENDED.iter().filter_map(|id| catalog::group(id)).filter(|g| app.shows_tool_group(g.id)).collect();
+            let recommended = !offered.is_empty();
+            let groups: Vec<&'static catalog::ToolGroup> = offered.into_iter().filter(|g| !app.is_tool_pinned(g.id)).collect();
             let open_file = app.profile.allows_id("file.open");
             if !groups.is_empty() || open_file {
                 egui::Frame::NONE
@@ -131,7 +131,7 @@ pub fn show(app: &mut PdfCraftApp, ui: &mut egui::Ui) {
                     .inner_margin(egui::Margin::same(18))
                     .show(ui, |ui| {
                         ui.set_width(ui.available_width());
-                        if !groups.is_empty() {
+                        if recommended {
                             ui.label(egui::RichText::new(tl!("Recommended tools")).font(theme::semibold(15.0)));
                             ui.add_space(10.0);
                         }

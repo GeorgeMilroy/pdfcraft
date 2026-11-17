@@ -388,13 +388,14 @@ fn finish_select_gesture(ui: &egui::Ui, cx: &PageCx<'_>, view: &mut DocView, p: 
                     return;
                 }
                 // The other selected comments on this page (not text markup or a Replace Text
-                // caret, which are where their text is, nor a locked one, which would refuse the
-                // whole step) move with the dragged one, as one undo step.
+                // caret, which are where their text is, nor a locked one or a kind the profile
+                // refuses, which would refuse the whole step) move with the dragged one, as one
+                // undo step.
                 let others: Vec<usize> = view
                     .comments
                     .also
                     .iter()
-                    .filter(|(p, i)| *p == page && *i != index && cx.get(*i).is_some_and(|a| !on_text(a) && !a.locked))
+                    .filter(|(p, i)| *p == page && *i != index && cx.get(*i).is_some_and(|a| !on_text(a) && !a.locked && cx.changes(a)))
                     .map(|(_, i)| *i)
                     .collect();
                 view.pending_edit = Some(if others.is_empty() {

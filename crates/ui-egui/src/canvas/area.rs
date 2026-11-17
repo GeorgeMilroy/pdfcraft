@@ -165,10 +165,10 @@ pub(super) fn run_button(app: &mut PdfCraftApp, index: usize, name: &str, identi
     use crate::features::Feature;
     use pdfcraft_engine::form_scripts::ButtonAction as B;
     let pages = app.session.get(app.views[index].id).map_or(0, |d| d.info.pages.len());
-    // What the profile refuses does nothing: resetting fields and importing an icon fill the
-    // form, Print prints and a script runs JavaScript.
+    // What the profile refuses does nothing: resetting fields, importing an icon and showing or
+    // hiding fields fill the form, Print prints and a script runs JavaScript.
     let refused = match &action {
-        B::Reset { .. } | B::ImportIcon => !app.profile.allows_feature(Feature::FormFill),
+        B::Reset { .. } | B::ImportIcon | B::ShowHide { .. } => !app.profile.allows_feature(Feature::FormFill),
         B::Named(n) if n == "Print" => !app.profile.allows_id("print.dialog"),
         B::Script(_) => !app.profile.allows_feature(Feature::JavaScript),
         _ => false,

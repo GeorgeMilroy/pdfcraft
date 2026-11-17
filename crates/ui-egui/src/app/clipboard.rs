@@ -304,8 +304,9 @@ impl PdfCraftApp {
             return false;
         }
         // Each pasted comment is one of its kind: the profile must allow every kind's feature, as
-        // for drawing one (a text it can't read pastes nothing).
-        if crate::features::xfdf_features(&xfdf).is_none_or(|kinds| kinds.iter().any(|f| !self.profile.allows_feature(f))) {
+        // for drawing one. A text it can't read holds no comments for upstream's check below, and
+        // apply_edit refuses it under a profile that limits features.
+        if crate::features::xfdf_features(&xfdf).is_some_and(|kinds| kinds.iter().any(|f| !self.profile.allows_feature(f))) {
             self.notify(tl!("Not allowed"));
             return false;
         }

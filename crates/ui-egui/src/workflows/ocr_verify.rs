@@ -2137,7 +2137,12 @@ fn apply(app: &mut PdfCraftApp, n: Intents) {
         }
         if n.accept_page {
             let page = v.current;
-            match v.accept_page(&mut app.session, page) {
+            let depth = v.doc.map_or(0, |d| app.undo_depth(d));
+            let accepted = v.accept_page(&mut app.session, page);
+            if let Some(d) = v.doc {
+                app.log_engine_steps(d, depth, [crate::features::Feature::Ocr].into_iter().collect());
+            }
+            match accepted {
                 Ok(count) if count > 0 => {
                     if let Some(doc) = v.doc {
                         refresh_view(app, doc);
@@ -2175,17 +2180,24 @@ fn apply(app: &mut PdfCraftApp, n: Intents) {
 fn do_accept(v: &mut OcrVerify, app: &mut PdfCraftApp) {
     let doc = v.doc;
     match app.ocr_draft.output_mode {
-        OutputMode::Searchable => match v.accept(&mut app.session) {
-            Ok(count) => {
-                if let Some(doc) = doc {
-                    refresh_view(app, doc);
-                }
-                if count > 0 {
-                    app.notify_fmt(tl!("Recognized text applied ({n} words, one undoable step)"), &[("n", &count.to_string())]);
-                }
+        OutputMode::Searchable => {
+            let depth = doc.map_or(0, |d| app.undo_depth(d));
+            let accepted = v.accept(&mut app.session);
+            if let Some(d) = doc {
+                app.log_engine_steps(d, depth, [crate::features::Feature::Ocr].into_iter().collect());
             }
-            Err(why) => app.notify_error(why),
-        },
+            match accepted {
+                Ok(count) => {
+                    if let Some(doc) = doc {
+                        refresh_view(app, doc);
+                    }
+                    if count > 0 {
+                        app.notify_fmt(tl!("Recognized text applied ({n} words, one undoable step)"), &[("n", &count.to_string())]);
+                    }
+                }
+                Err(why) => app.notify_error(why),
+            }
+        }
         OutputMode::EditableText => match v.editable_output(&app.session) {
             Ok((bytes, name)) => save_editable(app, bytes, name, doc),
             Err(why) => app.notify_error(why),

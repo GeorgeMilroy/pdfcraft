@@ -573,6 +573,24 @@ impl PdfCraftApp {
         })
     }
 
+    /// How many steps document `id`'s undo history holds (0 without the document).
+    pub(crate) fn undo_depth(&self, id: pdfcraft_engine::DocId) -> usize {
+        self.session.get(id).map_or(0, |d| d.undo_depth())
+    }
+
+    /// Log the step a session call took for document `id` outside `apply_edit` (Lock, Detect
+    /// fields, recognizing text, Mark differences, camera clean-up), when its undo history grew
+    /// past `depth`, as using `used`, under the engine's own label: Undo and Redo then judge it as
+    /// they judge apply_edit's steps instead of refusing a step the log doesn't know.
+    pub(crate) fn log_engine_steps(&mut self, id: pdfcraft_engine::DocId, depth: usize, used: crate::features::FeatureSet) {
+        let Some(doc) = self.session.get(id) else { return };
+        let Some(label) = doc.undo_label().map(|l| l.as_str().to_owned()) else { return };
+        let log = self.edit_log.entry(id).or_default();
+        for _ in depth..doc.undo_depth() {
+            log.applied(&label, used);
+        }
+    }
+
     /// Whether Undo (or Redo) may run: never in a read-only profile and, when the profile limits
     /// features, only if the step is one this app applied with features still allowed (so a
     /// comments-only profile can't undo a page change made before it).
@@ -748,8 +766,10 @@ impl PdfCraftApp {
                 (d.look, d.level) = d.applied;
             }
         };
+        // The profile's undo log steps with the history (as `undo` and `redo` step it).
         let mut undone = 0;
         while undone < done.steps && ours(&self.session, undone) && self.session.undo(id).is_ok() {
+            self.edit_log.entry(id).or_default().stepped(true);
             undone += 1;
         }
         if undone < done.steps {
@@ -757,14 +777,23 @@ impl PdfCraftApp {
                 if self.session.redo(id).is_err() {
                     break;
                 }
+                self.edit_log.entry(id).or_default().stepped(false);
             }
             restore(self);
             return;
         }
-        let result = self.session.enhance_camera_page_at(id, done.page, done.corners, done.look, done.level).and_then(|()| {
-            let turn = done.turns.rem_euclid(360);
-            if turn == 0 { Ok(1) } else { self.session.apply(id, Edit::RotatePages { pages: vec![done.page], degrees: turn }).map(|()| 2) }
-        });
+        // Each step is logged as it is taken (the enhancement, then the turn).
+        let depth = self.undo_depth(id);
+        let mut result = self.session.enhance_camera_page_at(id, done.page, done.corners, done.look, done.level).map(|()| 1);
+        self.log_engine_steps(id, depth, [crate::features::Feature::Ocr].into_iter().collect());
+        let turn = done.turns.rem_euclid(360);
+        if result.is_ok() && turn != 0 {
+            let rotate = Edit::RotatePages { pages: vec![done.page], degrees: turn };
+            let used = crate::features::edit_features(&rotate, &|_, _| None);
+            let depth = self.undo_depth(id);
+            result = self.session.apply(id, rotate).map(|()| 2);
+            self.log_engine_steps(id, depth, used);
+        }
         if let (Some(doc), Some(view)) = (self.session.get(id), self.views.get_mut(i)) {
             view.document_changed(&doc.info);
             if let Some(d) = view.camera_done.as_mut() {
@@ -806,7 +835,10 @@ impl PdfCraftApp {
             [u as f64, v as f64]
         });
         let (look, level) = (crate::camera_ui::Look::Colour, crate::camera_ui::DEFAULT_LEVEL);
-        match self.session.enhance_camera_page_at(id, q.page, corners, look, level) {
+        let depth = self.undo_depth(id);
+        let enhanced = self.session.enhance_camera_page_at(id, q.page, corners, look, level);
+        self.log_engine_steps(id, depth, [crate::features::Feature::Ocr].into_iter().collect());
+        match enhanced {
             Ok(()) => {
                 // The tool stays open with the clean-up slider, rotate, crop and organize.
                 if let (Some(doc), Some(view)) = (self.session.get(id), self.views.get_mut(i)) {
@@ -843,11 +875,15 @@ impl PdfCraftApp {
             self.notify(tl!("Not allowed"));
             return;
         }
-        // A cut the document or the profile refuses leaves the clipboard as it was.
-        if cut && !self.apply_edit(Edit::DeletePages { pages: pages.clone() }) {
+        // A cut the profile refuses leaves the clipboard as it was; otherwise upstream's order.
+        if cut && !self.profile.allows_edit(&Edit::DeletePages { pages: pages.clone() }) {
+            self.notify(tl!("Not allowed"));
             return;
         }
         self.page_clipboard = Some(clip);
+        if cut {
+            self.apply_edit(Edit::DeletePages { pages: pages.clone() });
+        }
         let what = if pages.len() == 1 { tl!("1 page").to_string() } else { crate::i18n::fmt(tl!("{n} pages"), &[("n", &pages.len().to_string())]) };
         if cut {
             self.notify_fmt("Cut {what}", &[("what", &what)]);
@@ -1175,10 +1211,12 @@ impl PdfCraftApp {
             return true;
         }
         let before = self.session.get(id).map(|d| d.edit_generation());
+        let depth = self.undo_depth(id);
         if let Err(e) = self.session.apply(id, Edit::FlattenFillSign) {
             self.notify_error(e);
             return false;
         }
+        self.log_engine_steps(id, depth, crate::features::edit_features(&Edit::FlattenFillSign, &|_, _| None));
         let after = self.session.get(id).map(|d| d.edit_generation());
         if before != after
             && let Some(doc) = self.session.get(id)
@@ -1387,9 +1425,12 @@ impl PdfCraftApp {
                 let (page, [left, top]) =
                     self.session.get(id).and_then(|d| self.views.get(i)?.bookmark_position(&d.info)).unwrap_or((current, [None, None]));
                 let (left, top) = (left.map(f64::from), top.map(f64::from));
-                if !self.apply_edit(Edit::AddBookmark { parent: vec![], index: n, title: "Untitled".into(), page, left, top }) {
+                let add = Edit::AddBookmark { parent: vec![], index: n, title: "Untitled".into(), page, left, top };
+                if !self.profile.allows_edit(&add) {
+                    self.notify(tl!("Not allowed"));
                     return;
                 }
+                self.apply_edit(add);
                 // Like Acrobat: the new bookmark starts in rename mode.
                 self.bookmark_rename = Some((vec![n], "Untitled".into()));
                 self.right = Some(crate::RightPanel::Bookmarks);

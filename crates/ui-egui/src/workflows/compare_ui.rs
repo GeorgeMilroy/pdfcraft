@@ -273,19 +273,26 @@ impl PdfCraftApp {
                 s.show_visual = visual;
                 self.shade_compare(index);
             }
-            PanelAction::Mark => match self.session.mark_differences_of(old, new, &pages) {
-                Ok(n) => {
-                    if let Some(info) = self.session.get(new).map(|d| d.info.clone()) {
-                        self.views[index].document_changed(&info);
+            PanelAction::Mark => {
+                // Notes and text markup on the newer document, one step for the profile's undo log.
+                let depth = self.undo_depth(new);
+                let marked = self.session.mark_differences_of(old, new, &pages);
+                let used = [crate::features::Feature::Comments, crate::features::Feature::Markup].into_iter().collect();
+                self.log_engine_steps(new, depth, used);
+                match marked {
+                    Ok(n) => {
+                        if let Some(info) = self.session.get(new).map(|d| d.info.clone()) {
+                            self.views[index].document_changed(&info);
+                        }
+                        self.notify(if n == 1 {
+                            tl!("Added 1 comment").to_string()
+                        } else {
+                            crate::i18n::fmt(tl!("Added {n} comments"), &[("n", &n.to_string())])
+                        });
                     }
-                    self.notify(if n == 1 {
-                        tl!("Added 1 comment").to_string()
-                    } else {
-                        crate::i18n::fmt(tl!("Added {n} comments"), &[("n", &n.to_string())])
-                    });
+                    Err(e) => self.notify_error(e),
                 }
-                Err(e) => self.notify_error(e),
-            },
+            }
             PanelAction::Report => match self.session.compare_report_of(old, new, &pages) {
                 Ok(bytes) => {
                     if let Err(e) = self.open_bytes("Compare Report.pdf", None, bytes.to_vec()) {

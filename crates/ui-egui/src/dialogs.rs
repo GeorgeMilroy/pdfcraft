@@ -55,6 +55,7 @@ struct Pending {
     number_now: Option<Edit>,
     apply_number: bool,
     link_command: Option<&'static str>,
+    open_url: Option<String>,
     protect_now: bool,
     boxes_now: bool,
     printer_marks_now: bool,
@@ -1725,8 +1726,12 @@ fn dialog_about(ui: &mut egui::Ui, profile: &crate::profile::UiProfile, req: &mu
                 Some(text) => ui.label(text.as_str()),
                 None => ui.label(tl!("A clean-room, open-source PDF application written in Rust. MIT OR Apache-2.0.")),
             };
-            if let Some(url) = &brand.about_url {
-                ui.hyperlink(url);
+            // Opened by `PdfCraftApp::open_url` (a new `noopener` tab on the web), never by egui's
+            // hyperlink, which on the web opens a plain click in the viewer's own frame.
+            if let Some(url) = &brand.about_url
+                && ui.link(url.as_str()).clicked()
+            {
+                req.open_url = Some(url.clone());
             }
             ui.label(
                 egui::RichText::new(
@@ -2278,6 +2283,9 @@ fn finish_close(app: &mut PdfCraftApp, dialog: Dialog, modal_closed: bool, req: 
     discard_inactive_password_drafts(app);
     if let Some(cmd) = req.link_command {
         app.execute(cmd);
+    }
+    if let Some(url) = req.open_url.take() {
+        app.open_url(&url);
     }
     if let Some(n) = req.open_revision {
         app.open_revision(n);
